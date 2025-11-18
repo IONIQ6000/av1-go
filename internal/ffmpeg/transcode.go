@@ -231,11 +231,12 @@ func selectQSVDevices() (string, string, string) {
 	}
 	
 	// For Intel Arc GPUs:
-	// - Use render node for hwaccel_device
-	// - Use qsv=hw for init_hw_device (can auto-detect or use render node)
+	// - Use render node for hwaccel_device (for input decoding)
+	// - Use qsv=hw for init_hw_device without device path (it will use the same device)
+	// Since we're already specifying the device with -hwaccel_device, init_hw_device can auto-detect
 	if renderNode != "" {
-		// Try with explicit render node in init_hw_device
-		return fmt.Sprintf("qsv=hw@%s", renderNode), "hw", renderNode
+		// Don't specify device in init_hw_device since -hwaccel_device already sets it
+		return "qsv=hw", "hw", renderNode
 	}
 	
 	// Fallback: let ffmpeg auto-detect everything
