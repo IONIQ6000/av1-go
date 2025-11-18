@@ -40,16 +40,27 @@ type StreamInfo struct {
 }
 
 // ProbeFile runs ffprobe on a file and returns parsed metadata.
-// Uses ffmpeg binary (which includes ffprobe functionality) at the given path.
+// Uses ffprobe binary (or ffmpeg if ffprobe is not available) at the given path.
 func ProbeFile(ffmpegPath, filePath string) (*ProbeResult, error) {
 	// Validate ffmpegPath is not empty
 	if ffmpegPath == "" {
 		return nil, fmt.Errorf("ffprobe failed: ffmpeg path is empty")
 	}
 	
-	// Use ffmpeg to probe (ffmpeg includes ffprobe functionality)
+	// Try to use ffprobe if available (it's in the same directory as ffmpeg)
+	installDir := filepath.Dir(ffmpegPath)
+	ffprobePath := filepath.Join(installDir, "ffprobe")
+	
+	// Check if ffprobe exists
+	if _, err := os.Stat(ffprobePath); err != nil {
+		// ffprobe not found, return error
+		// ffmpeg doesn't support ffprobe flags, so we need ffprobe
+		return nil, fmt.Errorf("ffprobe not found at %s (required for probing)", ffprobePath)
+	}
+	
+	// Use ffprobe with proper flags
 	cmd := exec.Command(
-		ffmpegPath,
+		ffprobePath,
 		"-hide_banner",
 		"-v", "quiet",
 		"-print_format", "json",

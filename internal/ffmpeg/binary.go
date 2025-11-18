@@ -105,8 +105,11 @@ func downloadAndExtractFFmpeg(installDir, url string) error {
 	tarReader := tar.NewReader(xzReader)
 
 	var ffmpegBinary []byte
+	var ffprobeBinary []byte
 	var foundFFmpeg bool
+	var foundFFprobe bool
 
+	// Read through entire archive to find both binaries
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -116,29 +119,62 @@ func downloadAndExtractFFmpeg(installDir, url string) error {
 			return fmt.Errorf("failed to read tar entry: %w", err)
 		}
 
+		baseName := filepath.Base(header.Name)
+		
 		// Look for the ffmpeg binary
-		if header.Typeflag == tar.TypeReg && filepath.Base(header.Name) == "ffmpeg" {
+		if header.Typeflag == tar.TypeReg && baseName == "ffmpeg" && !foundFFmpeg {
 			log.Printf("Found ffmpeg binary in archive at %s", header.Name)
 			ffmpegBinary, err = io.ReadAll(tarReader)
 			if err != nil {
 				return fmt.Errorf("failed to read ffmpeg binary from archive: %w", err)
 			}
 			foundFFmpeg = true
-			break
+			continue
+		}
+		
+		// Look for the ffprobe binary
+		if header.Typeflag == tar.TypeReg && baseName == "ffprobe" && !foundFFprobe {
+			log.Printf("Found ffprobe binary in archive at %s", header.Name)
+			ffprobeBinary, err = io.ReadAll(tarReader)
+			if err != nil {
+				return fmt.Errorf("failed to read ffprobe binary from archive: %w", err)
+			}
+			foundFFprobe = true
+			continue
+		}
+		
+		// Skip other entries by reading and discarding
+		if header.Typeflag == tar.TypeReg {
+			_, err = io.Copy(io.Discard, tarReader)
+			if err != nil {
+				return fmt.Errorf("failed to skip tar entry: %w", err)
+			}
 		}
 	}
 
 	if !foundFFmpeg {
 		return fmt.Errorf("ffmpeg binary not found in archive")
 	}
+	if !foundFFprobe {
+		log.Printf("Warning: ffprobe binary not found in archive, will use ffmpeg for probing")
+	}
 
-	// Write the binary to the install directory
+	// Write ffmpeg binary to the install directory
 	ffmpegPath := filepath.Join(installDir, "ffmpeg")
 	if err := os.WriteFile(ffmpegPath, ffmpegBinary, 0755); err != nil {
 		return fmt.Errorf("failed to write ffmpeg binary: %w", err)
 	}
-
 	log.Printf("ffmpeg binary extracted to %s", ffmpegPath)
+
+	// Write ffprobe binary if found
+	if foundFFprobe {
+		ffprobePath := filepath.Join(installDir, "ffprobe")
+		if err := os.WriteFile(ffprobePath, ffprobeBinary, 0755); err != nil {
+			return fmt.Errorf("failed to write ffprobe binary: %w", err)
+		}
+		log.Printf("ffprobe binary extracted to %s", ffprobePath)
+	}
+
 	return nil
 }
 
