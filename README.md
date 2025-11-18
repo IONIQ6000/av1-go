@@ -175,20 +175,58 @@ Ensure the `av1d` user has read access to library directories:
 sudo setfacl -R -m u:av1d:rx /path/to/media
 ```
 
-## Development
+## Rebuilding
 
-Build for development:
+### Quick Rebuild
+
+Use the rebuild script:
 ```bash
-go build ./cmd/av1d
-go build ./cmd/av1top
+./rebuild.sh
 ```
 
-Run daemon manually:
+This builds both binaries in the current directory.
+
+### Rebuild and Install
+
+To rebuild and install system-wide:
+```bash
+sudo ./rebuild.sh --install
+```
+
+This will:
+1. Rebuild both binaries
+2. Copy them to `/usr/local/bin`
+3. Restart the service (you'll need to do this manually)
+
+### Manual Rebuild
+
+Build binaries manually:
+```bash
+# Update dependencies
+go mod download
+go mod tidy
+
+# Build daemon
+go build -o av1d ./cmd/av1d
+
+# Build TUI
+go build -o av1top ./cmd/av1top
+```
+
+After rebuilding, if installed system-wide:
+```bash
+sudo cp av1d av1top /usr/local/bin/
+sudo systemctl restart av1d
+```
+
+## Development
+
+Run daemon manually (for testing):
 ```bash
 ./av1d
 ```
 
-Run TUI manually:
+Run TUI manually (for testing):
 ```bash
 ./av1top
 ```
