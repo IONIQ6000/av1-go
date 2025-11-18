@@ -115,10 +115,14 @@ func main() {
 			// Check if job already exists for this file
 			existingJob := jobs.FindJobBySourcePath(existingJobs, path)
 			if existingJob != nil {
-				// Skip files that already have jobs (unless they're pending and need re-evaluation)
-				if existingJob.Status != jobs.JobStatusPending {
+				// Only skip if job succeeded (already transcoded)
+				// Ignore old skipped/failed jobs - re-evaluate them
+				if existingJob.Status == jobs.JobStatusSuccess {
+					log.Printf("  → Skipped: already successfully transcoded (job %s)", existingJob.ID)
 					return nil
 				}
+				// For pending/running/skipped/failed jobs, continue to re-evaluate
+				// This allows files to be re-scanned if they were previously skipped/failed
 			}
 
 			// Check file size
@@ -180,6 +184,15 @@ func main() {
 			var job *jobs.Job
 			if existingJob != nil {
 				job = existingJob
+				// Reset status to pending if it was previously skipped/failed
+				// This allows re-processing of files that were previously rejected
+				if job.Status == jobs.JobStatusSkipped || job.Status == jobs.JobStatusFailed {
+					log.Printf("  → Resetting old %s job to pending for re-evaluation", job.Status)
+					job.Status = jobs.JobStatusPending
+					job.Reason = "" // Clear old reason
+					job.StartedAt = nil
+					job.FinishedAt = nil
+				}
 			} else {
 				job = jobs.NewJob(path)
 			}
