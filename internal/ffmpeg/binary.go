@@ -179,7 +179,12 @@ func VerifyFFmpeg(ffmpegPath string) error {
 
 	testOutput, err := testCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("QSV test failed: %w (output: %s)", err, string(testOutput))
+		outputStr := string(testOutput)
+		// Check for common library missing errors
+		if strings.Contains(outputStr, "libva-drm.so") || strings.Contains(outputStr, "cannot open shared object file") {
+			return fmt.Errorf("QSV test failed: missing VA-API libraries. Install with: sudo apt-get install libva-drm2 libva2 intel-media-va-driver-non-free libdrm-intel1. Error: %w (output: %s)", err, outputStr)
+		}
+		return fmt.Errorf("QSV test failed: %w (output: %s)", err, outputStr)
 	}
 
 	log.Printf("ffmpeg verification passed")

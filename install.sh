@@ -78,6 +78,17 @@ apt-get install -y -qq \
     xz-utils \
     || log_warn "Some packages may have failed to install"
 
+# Install Intel GPU/VA-API dependencies for QSV
+log_info "Installing Intel GPU/VA-API dependencies..."
+apt-get install -y -qq \
+    libva-drm2 \
+    libva2 \
+    intel-media-va-driver-non-free \
+    libdrm-intel1 \
+    || log_warn "Some GPU packages may have failed to install"
+
+log_info "GPU dependencies installed"
+
 # Create application user and group
 if ! id "$APP_USER" &>/dev/null; then
     log_info "Creating user ${APP_USER}..."
