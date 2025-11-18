@@ -37,18 +37,29 @@ func main() {
 	if err != nil {
 		// Check if it's a QSV test failure - allow daemon to start anyway
 		// QSV will be tested again during actual transcoding
-		if strings.Contains(err.Error(), "QSV test failed") {
+		if strings.Contains(err.Error(), "QSV test failed") || strings.Contains(err.Error(), "GPU device not accessible") {
 			log.Printf("Warning: QSV test failed during startup: %v", err)
 			log.Printf("Daemon will start anyway - QSV will be tested during transcoding")
 			log.Printf("If transcoding fails, check GPU permissions and drivers")
-			// Still set ffmpegPath even if QSV test failed
-			ffmpegPath = filepath.Join(cfg.FFmpegInstallDir, "ffmpeg")
+			// Ensure ffmpegPath is set even if QSV test failed
+			if ffmpegPath == "" {
+				ffmpegPath = filepath.Join(cfg.FFmpegInstallDir, "ffmpeg")
+			}
 			if _, err := os.Stat(ffmpegPath); err != nil {
 				log.Fatalf("ffmpeg binary not found at %s: %v", ffmpegPath, err)
 			}
+			log.Printf("Using ffmpeg at %s (QSV test failed but binary exists)", ffmpegPath)
 		} else {
 			log.Fatalf("Failed to ensure ffmpeg: %v", err)
 		}
+	}
+	
+	// Validate ffmpegPath is set and executable
+	if ffmpegPath == "" {
+		log.Fatalf("ffmpeg path is empty!")
+	}
+	if _, err := os.Stat(ffmpegPath); err != nil {
+		log.Fatalf("ffmpeg binary not found at %s: %v", ffmpegPath, err)
 	}
 	log.Printf("ffmpeg ready at: %s", ffmpegPath)
 
@@ -124,7 +135,7 @@ func main() {
 			log.Printf("  → File size OK: %.2f GB", float64(info.Size())/(1024*1024*1024))
 
 			// Run ffprobe to get metadata
-			log.Printf("  → Running ffprobe...")
+			log.Printf("  → Running ffprobe... (ffmpegPath: %q)", ffmpegPath)
 			probeResult, err := metadata.ProbeFile(ffmpegPath, path)
 			if err != nil {
 				reason := fmt.Sprintf("ffprobe failed: %v", err)

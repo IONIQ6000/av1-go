@@ -42,6 +42,11 @@ type StreamInfo struct {
 // ProbeFile runs ffprobe on a file and returns parsed metadata.
 // Uses ffmpeg binary (which includes ffprobe functionality) at the given path.
 func ProbeFile(ffmpegPath, filePath string) (*ProbeResult, error) {
+	// Validate ffmpegPath is not empty
+	if ffmpegPath == "" {
+		return nil, fmt.Errorf("ffprobe failed: ffmpeg path is empty")
+	}
+	
 	// Use ffmpeg to probe (ffmpeg includes ffprobe functionality)
 	cmd := exec.Command(
 		ffmpegPath,
