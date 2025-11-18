@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,10 +23,10 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	initDevice, filterDevice := selectQSVDevices()
 
 	// Build command arguments
+	// Note: When using -init_hw_device, we don't use -hwaccel qsv
+	// The init_hw_device creates the QSV context
 	args := []string{
 		"-hide_banner",
-		"-hwaccel", "qsv",
-		"-hwaccel_output_format", "qsv",
 		"-init_hw_device", initDevice,
 		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
@@ -66,6 +67,7 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	surfaceFormat := determineSurfaceFormat(int(videoStream.BitDepth))
 
 	// Video filter chain
+	// hwupload uses the device specified by -filter_hw_device automatically
 	var vfParts []string
 	if isWebRipLike {
 		// WebRip: pad to even dimensions, set SAR, format, hwupload
@@ -163,14 +165,29 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	cmd := exec.Command(ffmpegPath, args...)
 
 	// Capture both stdout and stderr for logging
-	output, err := cmd.CombinedOutput()
+	// Use stderr for better error visibility (ffmpeg outputs errors to stderr)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 
 	if err != nil {
 		// Try to extract exit code
 		if exitError, ok := err.(*exec.ExitError); ok {
-			return exitError.ExitCode(), fmt.Errorf("ffmpeg failed with exit code %d: %s", exitError.ExitCode(), string(output))
+			errOutput := stderr.String()
+			if errOutput == "" {
+				errOutput = string(output)
+			}
+			// Limit error output to last 2000 chars to avoid huge logs
+			if len(errOutput) > 2000 {
+				errOutput = "... " + errOutput[len(errOutput)-2000:]
+			}
+			return exitError.ExitCode(), fmt.Errorf("ffmpeg failed with exit code %d: %s", exitError.ExitCode(), errOutput)
 		}
-		return -1, fmt.Errorf("ffmpeg execution failed: %w: %s", err, string(output))
+		errOutput := stderr.String()
+		if errOutput == "" {
+			errOutput = string(output)
+		}
+		return -1, fmt.Errorf("ffmpeg execution failed: %w: %s", err, errOutput)
 	}
 
 	return 0, nil
