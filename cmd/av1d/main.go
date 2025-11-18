@@ -41,6 +41,11 @@ func main() {
 			log.Printf("Warning: QSV test failed during startup: %v", err)
 			log.Printf("Daemon will start anyway - QSV will be tested during transcoding")
 			log.Printf("If transcoding fails, check GPU permissions and drivers")
+			// Still set ffmpegPath even if QSV test failed
+			ffmpegPath = filepath.Join(cfg.FFmpegInstallDir, "ffmpeg")
+			if _, err := os.Stat(ffmpegPath); err != nil {
+				log.Fatalf("ffmpeg binary not found at %s: %v", ffmpegPath, err)
+			}
 		} else {
 			log.Fatalf("Failed to ensure ffmpeg: %v", err)
 		}

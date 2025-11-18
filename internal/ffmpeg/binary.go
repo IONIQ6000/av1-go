@@ -27,12 +27,14 @@ func EnsureFFmpeg(installDir, ffmpegURL string) (string, error) {
 			log.Printf("ffmpeg found at %s", ffmpegPath)
 			// Verify it anyway to ensure it's working
 			if err := VerifyFFmpeg(ffmpegPath); err != nil {
-				// Check if it's a library issue - don't re-download if libraries are missing
+				// Check if it's a QSV test failure - don't re-download, just return error
+				// The caller can decide to continue anyway
 				errStr := err.Error()
-				if strings.Contains(errStr, "missing VA-API libraries") || strings.Contains(errStr, "libva-drm.so") {
-					log.Printf("ffmpeg verification failed due to missing libraries: %v", err)
-					return "", err // Return the error so user can install libraries
+				if strings.Contains(errStr, "QSV test failed") || strings.Contains(errStr, "missing VA-API libraries") || strings.Contains(errStr, "libva-drm.so") || strings.Contains(errStr, "GPU device not accessible") {
+					log.Printf("ffmpeg verification failed (non-critical): %v", err)
+					return ffmpegPath, err // Return path but with error so caller can decide
 				}
+				// Other verification failures - might need to re-download
 				log.Printf("Existing ffmpeg failed verification: %v", err)
 				log.Printf("Re-downloading ffmpeg...")
 				// Remove the broken binary and re-download
@@ -53,6 +55,12 @@ func EnsureFFmpeg(installDir, ffmpegURL string) (string, error) {
 
 	// Verify the newly installed ffmpeg
 	if err := VerifyFFmpeg(ffmpegPath); err != nil {
+		// Check if it's a QSV test failure - still return the path
+		errStr := err.Error()
+		if strings.Contains(errStr, "QSV test failed") || strings.Contains(errStr, "GPU device not accessible") {
+			log.Printf("ffmpeg installed but QSV test failed: %v", err)
+			return ffmpegPath, err // Return path with error
+		}
 		return "", fmt.Errorf("ffmpeg verification failed: %w", err)
 	}
 
