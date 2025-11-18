@@ -59,6 +59,15 @@ if [ "$1" == "--install" ] || [ "$1" == "-i" ]; then
         exit 1
     fi
     
+    # Check if service is running
+    if systemctl is-active --quiet av1d; then
+        log_info "Stopping av1d service..."
+        systemctl stop av1d
+        SERVICE_WAS_RUNNING=1
+    else
+        SERVICE_WAS_RUNNING=0
+    fi
+    
     log_info "Installing binaries to ${BIN_DIR}..."
     cp "${SCRIPT_DIR}/av1d" "${BIN_DIR}/av1d"
     cp "${SCRIPT_DIR}/av1top" "${BIN_DIR}/av1top"
@@ -66,7 +75,21 @@ if [ "$1" == "--install" ] || [ "$1" == "-i" ]; then
     chmod +x "${BIN_DIR}/av1top"
     
     log_info "Binaries installed successfully!"
-    log_info "Restart the service with: sudo systemctl restart av1d"
+    
+    # Restart service if it was running
+    if [ $SERVICE_WAS_RUNNING -eq 1 ]; then
+        log_info "Starting av1d service..."
+        systemctl start av1d
+        
+        # Check if service started successfully
+        if systemctl is-active --quiet av1d; then
+            log_info "✓ Service restarted successfully"
+        else
+            log_warn "Service failed to start. Check status with: systemctl status av1d"
+        fi
+    else
+        log_info "Service was not running. Start with: sudo systemctl start av1d"
+    fi
 else
     log_info "Build complete! Binaries are in: ${SCRIPT_DIR}"
     echo ""
