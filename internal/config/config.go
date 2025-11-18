@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 )
@@ -39,11 +40,20 @@ func DefaultConfig() TranscodeConfig {
 	}
 }
 
-// LoadConfig loads configuration from a file path.
-// For v1, this is a stub that returns DefaultConfig() and ignores the path.
-// Future versions can read from JSON or TOML.
+// LoadConfig loads configuration from a JSON file path.
+// If the file doesn't exist or can't be read, returns an error.
+// Callers should fall back to DefaultConfig() if needed.
 func LoadConfig(path string) (TranscodeConfig, error) {
-	// TODO: Implement actual config file loading
-	return DefaultConfig(), nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return TranscodeConfig{}, err
+	}
+
+	var cfg TranscodeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return TranscodeConfig{}, err
+	}
+
+	return cfg, nil
 }
 

@@ -11,7 +11,13 @@ import (
 
 func main() {
 	// Load config to get jobs directory
-	cfg := config.DefaultConfig()
+	// Try to load from /etc/av1qsvd/config.json, fallback to default
+	configPath := "/etc/av1qsvd/config.json"
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		// Fallback to default config
+		cfg = config.DefaultConfig()
+	}
 
 	// Create TUI model
 	m := tui.NewModel(cfg.JobStateDir)
