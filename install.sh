@@ -156,7 +156,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${DATA_DIR} /dev/dri
+ReadWritePaths=${DATA_DIR} /dev/dri /main-library-2
 ReadOnlyPaths=${CONFIG_DIR}
 
 # Resource limits (adjust as needed)
