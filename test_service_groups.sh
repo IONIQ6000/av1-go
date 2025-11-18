@@ -45,18 +45,37 @@ if [ -f "/proc/$AV1D_PID/status" ]; then
     
     # Get actual group list - Groups: line shows supplementary groups
     GROUPS_LINE=$(cat /proc/$AV1D_PID/status | grep ^Groups:)
-    GROUPS=$(echo "$GROUPS_LINE" | cut -f2)
+    # Extract group IDs (everything after "Groups:")
+    GROUPS=$(echo "$GROUPS_LINE" | sed 's/^Groups:[[:space:]]*//')
     log_info "Groups line: $GROUPS_LINE"
     log_info "Group IDs: $GROUPS"
     
     # Also check using id command for the process
     PROC_UID=$(ps -o uid= -p "$AV1D_PID" | tr -d ' ')
     log_info "Checking groups using 'id' command:"
-    sudo -u "#$PROC_UID" id 2>/dev/null || id av1d
+    ID_OUTPUT=$(sudo -u "#$PROC_UID" id 2>/dev/null || id av1d)
+    echo "  $ID_OUTPUT"
     
-    # Check if GID 568 is in the list
+    # Check if GID 568 is in the list (check both methods)
+    HAS_568_IN_PROC=false
+    HAS_568_IN_ID=false
+    
     if echo "$GROUPS" | grep -qE "\b568\b"; then
-        log_info "✓ Process has GID 568 in supplementary groups"
+        HAS_568_IN_PROC=true
+    fi
+    
+    if echo "$ID_OUTPUT" | grep -qE "\b568\b|media"; then
+        HAS_568_IN_ID=true
+    fi
+    
+    if [ "$HAS_568_IN_PROC" = "true" ] || [ "$HAS_568_IN_ID" = "true" ]; then
+        log_info "✓ Process HAS GID 568 in groups!"
+        if [ "$HAS_568_IN_PROC" = "true" ]; then
+            log_info "  Confirmed via /proc/PID/status"
+        fi
+        if [ "$HAS_568_IN_ID" = "true" ]; then
+            log_info "  Confirmed via 'id' command"
+        fi
     else
         log_error "✗ Process does NOT have GID 568 in supplementary groups"
         echo ""
