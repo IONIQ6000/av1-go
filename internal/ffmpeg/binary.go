@@ -16,34 +16,66 @@ import (
 )
 
 // EnsureFFmpeg ensures that ffmpeg is installed and verified at the specified install directory.
-// It downloads and extracts ffmpeg if it doesn't exist, then verifies it.
+// It downloads and extracts ffmpeg and ffprobe if they don't exist, then verifies them.
 // Returns the path to the ffmpeg binary, or an error if installation or verification fails.
 func EnsureFFmpeg(installDir, ffmpegURL string) (string, error) {
 	ffmpegPath := filepath.Join(installDir, "ffmpeg")
+	ffprobePath := filepath.Join(installDir, "ffprobe")
 
-	// Check if ffmpeg already exists and is executable
-	if info, err := os.Stat(ffmpegPath); err == nil {
-		if info.Mode().Perm()&0111 != 0 {
-			log.Printf("ffmpeg found at %s", ffmpegPath)
-			// Verify it anyway to ensure it's working
-			if err := VerifyFFmpeg(ffmpegPath); err != nil {
-				// Check if it's a QSV test failure - don't re-download, just return error
-				// The caller can decide to continue anyway
-				errStr := err.Error()
-				if strings.Contains(errStr, "QSV test failed") || strings.Contains(errStr, "missing VA-API libraries") || strings.Contains(errStr, "libva-drm.so") || strings.Contains(errStr, "GPU device not accessible") {
-					log.Printf("ffmpeg verification failed (non-critical): %v", err)
-					return ffmpegPath, err // Return path but with error so caller can decide
-				}
-				// Other verification failures - might need to re-download
-				log.Printf("Existing ffmpeg failed verification: %v", err)
-				log.Printf("Re-downloading ffmpeg...")
-				// Remove the broken binary and re-download
-				if err := os.Remove(ffmpegPath); err != nil {
-					return "", fmt.Errorf("failed to remove broken ffmpeg: %w", err)
-				}
-			} else {
+	// Check if both ffmpeg and ffprobe exist
+	ffmpegExists := false
+	ffprobeExists := false
+	
+	if info, err := os.Stat(ffmpegPath); err == nil && info.Mode().Perm()&0111 != 0 {
+		ffmpegExists = true
+		log.Printf("ffmpeg found at %s", ffmpegPath)
+	}
+	
+	if info, err := os.Stat(ffprobePath); err == nil && info.Mode().Perm()&0111 != 0 {
+		ffprobeExists = true
+		log.Printf("ffprobe found at %s", ffprobePath)
+	}
+
+	// If ffmpeg exists but ffprobe doesn't, we need to re-extract (ffprobe was added later)
+	if ffmpegExists && !ffprobeExists {
+		log.Printf("ffmpeg exists but ffprobe is missing, re-extracting both...")
+		// Remove ffmpeg to force re-extraction
+		if err := os.Remove(ffmpegPath); err != nil {
+			log.Printf("Warning: failed to remove existing ffmpeg: %v", err)
+		}
+		ffmpegExists = false
+	}
+
+	// If ffmpeg exists and is executable, verify it
+	if ffmpegExists {
+		// Verify it anyway to ensure it's working
+		if err := VerifyFFmpeg(ffmpegPath); err != nil {
+			// Check if it's a QSV test failure - don't re-download, just return error
+			// The caller can decide to continue anyway
+			errStr := err.Error()
+			if strings.Contains(errStr, "QSV test failed") || strings.Contains(errStr, "missing VA-API libraries") || strings.Contains(errStr, "libva-drm.so") || strings.Contains(errStr, "GPU device not accessible") {
+				log.Printf("ffmpeg verification failed (non-critical): %v", err)
+				return ffmpegPath, err // Return path but with error so caller can decide
+			}
+			// Other verification failures - might need to re-download
+			log.Printf("Existing ffmpeg failed verification: %v", err)
+			log.Printf("Re-downloading ffmpeg...")
+			// Remove the broken binary and re-download
+			if err := os.Remove(ffmpegPath); err != nil {
+				return "", fmt.Errorf("failed to remove broken ffmpeg: %w", err)
+			}
+			ffmpegExists = false
+		} else {
+			// ffmpeg verified successfully, check ffprobe
+			if ffprobeExists {
 				return ffmpegPath, nil
 			}
+			// ffprobe missing but ffmpeg is good - need to extract ffprobe
+			log.Printf("ffmpeg verified but ffprobe missing, re-extracting...")
+			if err := os.Remove(ffmpegPath); err != nil {
+				log.Printf("Warning: failed to remove existing ffmpeg: %v", err)
+			}
+			ffmpegExists = false
 		}
 	}
 
