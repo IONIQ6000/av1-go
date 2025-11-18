@@ -43,16 +43,29 @@ if [ -f "/proc/$AV1D_PID/status" ]; then
     echo "  GID: $(grep ^Gid: /proc/$AV1D_PID/status)"
     echo ""
     
-    # Get actual group list
-    GROUPS=$(cat /proc/$AV1D_PID/status | grep ^Groups: | cut -f2)
+    # Get actual group list - Groups: line shows supplementary groups
+    GROUPS_LINE=$(cat /proc/$AV1D_PID/status | grep ^Groups:)
+    GROUPS=$(echo "$GROUPS_LINE" | cut -f2)
+    log_info "Groups line: $GROUPS_LINE"
     log_info "Group IDs: $GROUPS"
     
+    # Also check using id command for the process
+    PROC_UID=$(ps -o uid= -p "$AV1D_PID" | tr -d ' ')
+    log_info "Checking groups using 'id' command:"
+    sudo -u "#$PROC_UID" id 2>/dev/null || id av1d
+    
     # Check if GID 568 is in the list
-    if echo "$GROUPS" | grep -q "568"; then
-        log_info "✓ Process has GID 568 in groups"
+    if echo "$GROUPS" | grep -qE "\b568\b"; then
+        log_info "✓ Process has GID 568 in supplementary groups"
     else
-        log_error "✗ Process does NOT have GID 568 in groups"
-        log_warn "  Service needs to be restarted to pick up new group membership"
+        log_error "✗ Process does NOT have GID 568 in supplementary groups"
+        echo ""
+        log_info "Checking service file:"
+        grep "SupplementaryGroups" /etc/systemd/system/av1d.service || log_warn "SupplementaryGroups not found in service file"
+        echo ""
+        log_warn "  If SupplementaryGroups is set correctly, try:"
+        log_warn "  1. systemctl daemon-reexec (re-execute systemd)"
+        log_warn "  2. Reboot the container"
     fi
 else
     log_warn "Cannot read /proc/$AV1D_PID/status"
