@@ -23,10 +23,10 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	initDevice, filterDevice := selectQSVDevices()
 
 	// Build command arguments
-	// Note: When using -init_hw_device, we don't use -hwaccel qsv
-	// The init_hw_device creates the QSV context
+	// Use -hwaccel none to avoid conflicts, then init_hw_device creates QSV context
 	args := []string{
 		"-hide_banner",
+		"-hwaccel", "none",
 		"-init_hw_device", initDevice,
 		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
@@ -194,29 +194,42 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 }
 
 // selectQSVDevices picks the best available init/filter device pair for QSV.
-// It prefers explicit /dev/dri paths when available but falls back to a logical device.
+// Returns init device string and filter device name.
+// Tries multiple methods: explicit device paths, then logical device names.
 func selectQSVDevices() (string, string) {
+	// Method 1: Try with explicit render node paths
 	candidates := []string{
 		"/dev/dri/renderD128",
-		"/dev/dri/card0",
 		"/dev/dri/renderD129",
+		"/dev/dri/card0",
 	}
 
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			return fmt.Sprintf("qsv=qsv:%s", candidate), "qsv"
+			// Try format: qsv=hw:/dev/dri/renderD128
+			return fmt.Sprintf("qsv=hw:%s", candidate), "hw"
 		}
 	}
 
-	// Try to discover any render node dynamically
+	// Method 2: Try to discover any render node dynamically
 	if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil {
 		for _, match := range matches {
 			if _, err := os.Stat(match); err == nil {
-				return fmt.Sprintf("qsv=qsv:%s", match), "qsv"
+				return fmt.Sprintf("qsv=hw:%s", match), "hw"
 			}
 		}
 	}
 
-	// Last resort: rely on logical qsv device name
-	return "qsv=qsv", "qsv"
+	// Method 3: Try with card nodes
+	if matches, err := filepath.Glob("/dev/dri/card*"); err == nil {
+		for _, match := range matches {
+			if _, err := os.Stat(match); err == nil {
+				return fmt.Sprintf("qsv=hw:%s", match), "hw"
+			}
+		}
+	}
+
+	// Method 4: Last resort - use logical device name without path
+	// This relies on system default device discovery
+	return "qsv=hw", "hw"
 }
