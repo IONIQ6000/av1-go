@@ -137,9 +137,9 @@ func ProcessJob(job *jobs.Job, ffmpegPath string, probeResult *metadata.ProbeRes
 		now := time.Now()
 		job.FinishedAt = &now
 
-		// Write .why.txt and .av1skip
+		// Write .av1qsvd-why.txt and .av1qsvd-skip
 		metadata.WriteWhyFile(job.SourcePath, reason)
-		skipMarker := strings.TrimSuffix(job.SourcePath, ext) + ".av1skip"
+		skipMarker := strings.TrimSuffix(job.SourcePath, ext) + ".av1qsvd-skip"
 		os.WriteFile(skipMarker, []byte("skip"), 0644)
 
 		// Delete output file

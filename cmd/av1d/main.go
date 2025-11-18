@@ -100,10 +100,10 @@ func main() {
 			}
 			log.Printf("Found media file: %s (ext: %s, size: %.2f GB)", path, ext, float64(info.Size())/(1024*1024*1024))
 
-			// Check for .av1skip marker
-			skipMarker := strings.TrimSuffix(path, ext) + ".av1skip"
+			// Check for .av1qsvd-skip marker (new pattern to avoid old .av1skip conflicts)
+			skipMarker := strings.TrimSuffix(path, ext) + ".av1qsvd-skip"
 			if _, err := os.Stat(skipMarker); err == nil {
-				reason := "marked with .av1skip"
+				reason := "marked with .av1qsvd-skip"
 				skipped = append(skipped, skippedFile{
 					path:   path,
 					reason: reason,

@@ -190,9 +190,10 @@ func isWebRipLike(result *ProbeResult) bool {
 	return false
 }
 
-// WriteWhyFile writes a .why.txt sidecar file explaining why a file was skipped or rejected.
+// WriteWhyFile writes a .av1qsvd-why.txt sidecar file explaining why a file was skipped or rejected.
+// Uses new pattern to avoid conflicts with old .why.txt files.
 func WriteWhyFile(filePath, reason string) error {
 	basePath := strings.TrimSuffix(filePath, filepath.Ext(filePath))
-	whyPath := basePath + ".why.txt"
+	whyPath := basePath + ".av1qsvd-why.txt"
 	return os.WriteFile(whyPath, []byte(reason), 0644)
 }
