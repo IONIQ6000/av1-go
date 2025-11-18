@@ -72,9 +72,26 @@ func (m Model) View() string {
 		metricsWidth = 48
 	}
 	summaryWidth := maxInt(32, m.width-metricsWidth-6)
-
-	metricsPanel := renderPanel("SYSTEM METRICS", renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent), metricsWidth)
-	summaryPanel := renderPanel("QUEUE SUMMARY", renderQueueSummary(m.jobs), summaryWidth)
+	
+	metricsBody := renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent)
+	summaryBody := renderQueueSummary(m.jobs)
+	
+	// Ensure both panels have the same height by padding the shorter one
+	metricsLines := strings.Count(metricsBody, "\n") + 1
+	summaryLines := strings.Count(summaryBody, "\n") + 1
+	maxLines := maxInt(metricsLines, summaryLines)
+	
+	// Pad metrics if needed
+	if metricsLines < maxLines {
+		metricsBody += strings.Repeat("\n", maxLines-metricsLines)
+	}
+	// Pad summary if needed
+	if summaryLines < maxLines {
+		summaryBody += strings.Repeat("\n", maxLines-summaryLines)
+	}
+	
+	metricsPanel := renderPanel("SYSTEM METRICS", metricsBody, metricsWidth)
+	summaryPanel := renderPanel("QUEUE SUMMARY", summaryBody, summaryWidth)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, metricsPanel, summaryPanel)
 
 	activeBody, hasActive := renderActiveJob(m.jobs)
