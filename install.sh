@@ -149,7 +149,7 @@ StandardOutput=journal
 StandardError=journal
 
 # GPU device access
-SupplementaryGroups=video render
+SupplementaryGroups=video render media
 
 # Security hardening
 NoNewPrivileges=true
