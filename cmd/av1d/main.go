@@ -35,7 +35,15 @@ func main() {
 	// Ensure ffmpeg is installed and verified
 	ffmpegPath, err := ffmpeg.EnsureFFmpeg(cfg.FFmpegInstallDir, cfg.FFmpegURL)
 	if err != nil {
-		log.Fatalf("Failed to ensure ffmpeg: %v", err)
+		// Check if it's a QSV test failure - allow daemon to start anyway
+		// QSV will be tested again during actual transcoding
+		if strings.Contains(err.Error(), "QSV test failed") {
+			log.Printf("Warning: QSV test failed during startup: %v", err)
+			log.Printf("Daemon will start anyway - QSV will be tested during transcoding")
+			log.Printf("If transcoding fails, check GPU permissions and drivers")
+		} else {
+			log.Fatalf("Failed to ensure ffmpeg: %v", err)
+		}
 	}
 	log.Printf("ffmpeg ready at: %s", ffmpegPath)
 
