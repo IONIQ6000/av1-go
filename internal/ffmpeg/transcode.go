@@ -25,18 +25,23 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	log.Printf("Using QSV devices: init=%s, filter=%s, hwaccel_device=%s", initDevice, filterDevice, hwaccelDevice)
 
 	// Build command arguments
-	// For Intel Arc GPUs, use -hwaccel qsv with -hwaccel_device, plus init_hw_device for filters
+	// For Intel Arc GPUs:
+	// - Use -init_hw_device to create QSV device for filters/encoding
+	// - Use -hwaccel qsv with -hwaccel_device for input decoding
+	// If initDevice already includes device path, don't duplicate with hwaccel_device
 	args := []string{
 		"-hide_banner",
 		"-hwaccel", "qsv",
 	}
 	
-	// Add hwaccel_device if we have a specific device
+	// Add hwaccel_device for input decoding (if device specified)
 	if hwaccelDevice != "" {
 		args = append(args, "-hwaccel_device", hwaccelDevice)
 	}
 	
-	// Add init_hw_device for filter chain
+	// Add init_hw_device for filter chain (encoding)
+	// If initDevice already has device path, it will use that
+	// Otherwise, it will use the device from -hwaccel_device
 	args = append(args,
 		"-init_hw_device", initDevice,
 		"-filter_hw_device", filterDevice,
@@ -209,6 +214,7 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 // selectQSVDevices picks the best available init/filter device pair for QSV.
 // Returns init device string, filter device name, and hwaccel_device path.
 // For Intel Arc GPUs, we need both -hwaccel_device and -init_hw_device.
+// Uses the same patterns as the verification test to ensure consistency.
 func selectQSVDevices() (string, string, string) {
 	// Find the best render node
 	var renderNode string
@@ -232,15 +238,15 @@ func selectQSVDevices() (string, string, string) {
 		}
 	}
 	
-	// For Intel Arc GPUs:
-	// - Use render node for hwaccel_device (for input decoding)
-	// - Use qsv=hw for init_hw_device without device path (it will use the same device)
-	// Since we're already specifying the device with -hwaccel_device, init_hw_device can auto-detect
+	// For Intel Arc GPUs, use the correct QSV initialization format:
+	// -init_hw_device qsv=qsv[:device] where device is optional
+	// -filter_hw_device qsv (the name after the =)
+	// The format "qsv=hw" is invalid - must use "qsv=qsv"
 	if renderNode != "" {
-		// Don't specify device in init_hw_device since -hwaccel_device already sets it
-		return "qsv=hw", "hw", renderNode
+		// Try with explicit device path first (most reliable for Arc GPUs)
+		return fmt.Sprintf("qsv=qsv:%s", renderNode), "qsv", renderNode
 	}
 	
-	// Fallback: let ffmpeg auto-detect everything
-	return "qsv=hw", "hw", ""
+	// Fallback: let ffmpeg auto-detect (no device path)
+	return "qsv=qsv", "qsv", ""
 }
