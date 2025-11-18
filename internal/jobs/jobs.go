@@ -23,17 +23,26 @@ const (
 
 // Job represents a transcoding job.
 type Job struct {
-	ID           string     `json:"id"`
-	SourcePath   string     `json:"source_path"`
-	OutputPath   string     `json:"output_path,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	Status       JobStatus  `json:"status"`
-	Reason       string     `json:"reason,omitempty"`
-	OriginalSize int64      `json:"original_bytes,omitempty"`
-	NewSize      int64      `json:"new_bytes,omitempty"`
-	IsWebRipLike bool       `json:"is_webrip_like"`
+	ID            string     `json:"id"`
+	SourcePath    string     `json:"source_path"`
+	OutputPath    string     `json:"output_path,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	Status        JobStatus  `json:"status"`
+	Reason        string     `json:"reason,omitempty"`
+	OriginalSize  int64      `json:"original_bytes,omitempty"`
+	NewSize       int64      `json:"new_bytes,omitempty"`
+	EstimatedSize int64      `json:"estimated_bytes,omitempty"`
+	IsWebRipLike  bool       `json:"is_webrip_like"`
+	SourceCodec   string     `json:"source_codec,omitempty"`
+	Resolution    string     `json:"resolution,omitempty"`
+	BitDepth      int        `json:"bit_depth,omitempty"`
+	FrameRate     string     `json:"frame_rate,omitempty"`
+	Container     string     `json:"container,omitempty"`
+	VideoCodec    string     `json:"video_codec,omitempty"`
+	AudioStreams  int        `json:"audio_streams,omitempty"`
+	SubStreams    int        `json:"subtitle_streams,omitempty"`
 }
 
 // NewJob creates a new job with a generated ID and sets CreatedAt to now.

@@ -146,6 +146,37 @@ func main() {
 
 			job.OriginalSize = info.Size()
 			job.IsWebRipLike = probeResult.IsWebRipLike
+			
+			// Populate metadata from probe result
+			if probeResult.VideoStream != nil {
+				job.SourceCodec = probeResult.VideoStream.CodecName
+				job.Resolution = fmt.Sprintf("%dx%d", probeResult.VideoStream.Width, probeResult.VideoStream.Height)
+				job.BitDepth = probeResult.VideoStream.BitDepth
+				job.FrameRate = probeResult.VideoStream.AvgFrameRate
+				if job.FrameRate == "" {
+					job.FrameRate = probeResult.VideoStream.RFrameRate
+				}
+			}
+			
+			// Count streams
+			audioCount := 0
+			subCount := 0
+			for _, stream := range probeResult.Streams {
+				switch stream.CodecType {
+				case "audio":
+					audioCount++
+				case "subtitle":
+					subCount++
+				}
+			}
+			job.AudioStreams = audioCount
+			job.SubStreams = subCount
+			
+			// Container from format
+			job.Container = probeResult.Format.FormatName
+			
+			// Estimate output size (rough estimate: AV1 is typically 50% of original for similar quality)
+			job.EstimatedSize = int64(float64(info.Size()) * 0.5)
 
 			// Save job
 			if err := jobs.SaveJob(job, cfg.JobStateDir); err != nil {

@@ -72,7 +72,8 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 	// Try gt/gt0/rps_act_freq_mhz (current frequency)
 	actFreqPaths := []string{
 		filepath.Join(cardPath, "gt", "gt0", "rps_act_freq_mhz"),
-		filepath.Join(cardPath, "gt_min_freq_mhz"),
+		filepath.Join(cardPath, "gt_act_freq_mhz"),
+		filepath.Join(cardPath, "gt_cur_freq_mhz"),
 	}
 	
 	var actFreq int64
@@ -96,6 +97,7 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 	maxFreqPaths := []string{
 		filepath.Join(cardPath, "gt", "gt0", "rps_max_freq_mhz"),
 		filepath.Join(cardPath, "gt_max_freq_mhz"),
+		filepath.Join(cardPath, "gt_boost_freq_mhz"),
 	}
 	
 	var maxFreq int64

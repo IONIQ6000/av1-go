@@ -48,10 +48,16 @@ func (m Model) View() string {
 	var sections []string
 
 	// Title
-	sections = append(sections, titleStyle.Render("AV1 Transcoding Daemon"))
+	sections = append(sections, titleStyle.Render("AV1 Transcoding Daemon - Detailed View"))
 
 	// System metrics
 	sections = append(sections, renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent))
+
+	// Active job details (if any job is running)
+	activeJobSection := renderActiveJob(m.jobs)
+	if activeJobSection != "" {
+		sections = append(sections, activeJobSection)
+	}
 
 	// Job table
 	sections = append(sections, renderJobTable(m.jobs, m.width))
@@ -59,26 +65,104 @@ func (m Model) View() string {
 	// Status bar
 	sections = append(sections, renderStatusBar(m.jobs, m.jobsDir, m.lastRefresh, m.width-2))
 
-	return strings.Join(sections, "\n\n")
+	return strings.Join(sections, "\n")
 }
 
 // renderMetrics renders CPU, memory, and GPU usage bars.
 func renderMetrics(cpuPercent, memPercent, gpuPercent float64) string {
-	cpuBar := renderBar("CPU", cpuPercent, 100)
-	memBar := renderBar("MEM", memPercent, 100)
-	gpuBar := renderBar("GPU", gpuPercent, 100)
+	cpuBar := renderBar("CPU", cpuPercent)
+	memBar := renderBar("MEM", memPercent)
+	gpuBar := renderBar("GPU", gpuPercent)
 	return lipgloss.JoinHorizontal(lipgloss.Left, cpuBar, "  ", memBar, "  ", gpuBar)
 }
 
-// renderBar renders a progress bar.
-func renderBar(label string, value, max float64) string {
+// renderBar renders a progress bar (all bars now use same format).
+func renderBar(label string, value float64) string {
 	width := 20
-	filled := int((value / max) * float64(width))
+	filled := int((value / 100.0) * float64(width))
 	if filled > width {
 		filled = width
 	}
+	if filled < 0 {
+		filled = 0
+	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-	return fmt.Sprintf("%s: %s %.1f%%", label, bar, value)
+	return fmt.Sprintf("%s: %s %5.1f%%", label, bar, value)
+}
+
+// renderActiveJob renders detailed information about the currently active job.
+func renderActiveJob(jobList []*jobs.Job) string {
+	var runningJob *jobs.Job
+	for _, job := range jobList {
+		if job.Status == jobs.JobStatusRunning {
+			runningJob = job
+			break
+		}
+	}
+
+	if runningJob == nil {
+		return ""
+	}
+
+	var details []string
+	
+	// Header
+	details = append(details, headerStyle.Render("⚡ ACTIVE TRANSCODE"))
+	
+	// File information
+	fileName := filepath.Base(runningJob.SourcePath)
+	details = append(details, fmt.Sprintf("File: %s", fileName))
+	
+	// Source details
+	if runningJob.Resolution != "" {
+		details = append(details, fmt.Sprintf("Resolution: %s", runningJob.Resolution))
+	}
+	if runningJob.VideoCodec != "" {
+		codec := runningJob.VideoCodec
+		if runningJob.BitDepth > 0 {
+			codec = fmt.Sprintf("%s (%d-bit)", codec, runningJob.BitDepth)
+		}
+		details = append(details, fmt.Sprintf("Source Codec: %s", codec))
+	}
+	if runningJob.FrameRate != "" {
+		details = append(details, fmt.Sprintf("Frame Rate: %s fps", runningJob.FrameRate))
+	}
+	if runningJob.Container != "" {
+		details = append(details, fmt.Sprintf("Container: %s", runningJob.Container))
+	}
+	
+	// Stream counts
+	streamInfo := []string{}
+	if runningJob.AudioStreams > 0 {
+		streamInfo = append(streamInfo, fmt.Sprintf("%d audio", runningJob.AudioStreams))
+	}
+	if runningJob.SubStreams > 0 {
+		streamInfo = append(streamInfo, fmt.Sprintf("%d subtitle", runningJob.SubStreams))
+	}
+	if len(streamInfo) > 0 {
+		details = append(details, fmt.Sprintf("Streams: %s", strings.Join(streamInfo, ", ")))
+	}
+	
+	// Sizes
+	details = append(details, fmt.Sprintf("Original Size: %s", formatSize(runningJob.OriginalSize)))
+	if runningJob.EstimatedSize > 0 {
+		estSavings := float64(runningJob.OriginalSize-runningJob.EstimatedSize) / float64(runningJob.OriginalSize) * 100
+		details = append(details, fmt.Sprintf("Estimated Size: %s (%.1f%% reduction)", 
+			formatSize(runningJob.EstimatedSize), estSavings))
+	}
+	
+	// Processing time
+	if runningJob.StartedAt != nil {
+		elapsed := time.Since(*runningJob.StartedAt)
+		details = append(details, fmt.Sprintf("Elapsed Time: %s", formatElapsed(elapsed)))
+	}
+	
+	// WebRip indicator
+	if runningJob.IsWebRipLike {
+		details = append(details, "Type: WebRip (VFR/odd dimensions)")
+	}
+	
+	return runningStyle.Render(strings.Join(details, "\n"))
 }
 
 // renderJobTable renders the job table.
@@ -92,7 +176,7 @@ func renderJobTable(jobs []*jobs.Job, width int) string {
 
 	// Header
 	header := renderRow(
-		[]string{"STATUS", "FILE", "ORIG_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"},
+		[]string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "NEW_SIZE", "EST_SIZE", "SAVINGS", "DURATION", "REASON"},
 		colWidths,
 		true,
 	)
@@ -159,24 +243,43 @@ func calculateSavings(origSize, newSize int64) string {
 	return fmt.Sprintf("%.1f%%", savings)
 }
 
+// formatElapsed formats elapsed time duration.
+func formatElapsed(d time.Duration) string {
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	
+	if hours > 0 {
+		return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm%ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
 // calculateColumnWidths calculates column widths based on available width.
 func calculateColumnWidths(totalWidth int) map[string]int {
-	// Fixed widths for some columns
+	// Fixed widths for columns
 	widths := map[string]int{
-		"STATUS":   8,
-		"ORIG_SIZE": 10,
-		"NEW_SIZE":  10,
-		"SAVINGS":  8,
-		"DURATION": 8,
-		"REASON":   20,
+		"STATUS":     10,
+		"CODEC":      8,
+		"RESOLUTION": 12,
+		"ORIG_SIZE":  11,
+		"NEW_SIZE":   11,
+		"EST_SIZE":   11,
+		"SAVINGS":    9,
+		"DURATION":   9,
+		"REASON":     25,
 	}
 
 	// Calculate FILE column width (remaining space)
-	usedWidth := widths["STATUS"] + widths["ORIG_SIZE"] + widths["NEW_SIZE"] +
-		widths["SAVINGS"] + widths["DURATION"] + widths["REASON"] + 6 // separators
+	usedWidth := widths["STATUS"] + widths["CODEC"] + widths["RESOLUTION"] +
+		widths["ORIG_SIZE"] + widths["NEW_SIZE"] + widths["EST_SIZE"] +
+		widths["SAVINGS"] + widths["DURATION"] + widths["REASON"] + 9 // separators
 	fileWidth := totalWidth - usedWidth - 2 // padding
-	if fileWidth < 10 {
-		fileWidth = 10
+	if fileWidth < 15 {
+		fileWidth = 15
 	}
 	widths["FILE"] = fileWidth
 
@@ -185,7 +288,7 @@ func calculateColumnWidths(totalWidth int) map[string]int {
 
 // renderRow renders a table row.
 func renderRow(columns []string, widths map[string]int, isHeader bool) string {
-	colNames := []string{"STATUS", "FILE", "ORIG_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"}
+	colNames := []string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "NEW_SIZE", "EST_SIZE", "SAVINGS", "DURATION", "REASON"}
 	var parts []string
 	for i, colName := range colNames {
 		width := widths[colName]
@@ -208,8 +311,17 @@ func renderRow(columns []string, widths map[string]int, isHeader bool) string {
 func renderJobRow(job *jobs.Job, widths map[string]int) string {
 	status := formatStatus(job.Status)
 	fileName := filepath.Base(job.SourcePath)
+	codec := job.SourceCodec
+	if codec == "" {
+		codec = "-"
+	}
+	resolution := job.Resolution
+	if resolution == "" {
+		resolution = "-"
+	}
 	origSize := formatSize(job.OriginalSize)
 	newSize := formatSize(job.NewSize)
+	estSize := formatSize(job.EstimatedSize)
 	savings := calculateSavings(job.OriginalSize, job.NewSize)
 	duration := formatDuration(job)
 	reason := job.Reason
@@ -218,7 +330,7 @@ func renderJobRow(job *jobs.Job, widths map[string]int) string {
 	}
 
 	row := renderRow(
-		[]string{status, fileName, origSize, newSize, savings, duration, reason},
+		[]string{status, fileName, codec, resolution, origSize, newSize, estSize, savings, duration, reason},
 		widths,
 		false,
 	)
