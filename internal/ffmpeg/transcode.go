@@ -21,16 +21,25 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
-	// Simplified approach for Intel Arc GPUs - NO init_hw_device
-	// Just use -hwaccel qsv and let ffmpeg handle device discovery
-	// This avoids MFX session errors with Arc GPUs
-	log.Printf("Using simple QSV mode (auto-detect devices)")
+	// Hybrid approach for Intel Arc GPUs:
+	// - Use VAAPI for decoding (more reliable on Linux)
+	// - Use QSV for AV1 encoding (requires proper device setup)
+	// This avoids QSV device creation errors during decode
+	log.Printf("Using VAAPI decode + QSV encode mode")
+
+	// Find render node for VAAPI
+	renderNode := findRenderNode()
+	if renderNode == "" {
+		renderNode = "/dev/dri/renderD128" // fallback
+	}
 
 	// Build command arguments
-	// Minimal QSV setup - let ffmpeg auto-detect everything
+	// Use VAAPI for hardware-accelerated decoding
 	args := []string{
 		"-hide_banner",
-		"-hwaccel", "qsv",
+		"-hwaccel", "vaapi",
+		"-hwaccel_device", renderNode,
+		"-hwaccel_output_format", "vaapi",
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
 	}
@@ -65,26 +74,24 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	// Determine quality based on height
 	quality := determineQuality(videoStream.Height)
 
-	// Determine surface format based on bit depth
-	surfaceFormat := determineSurfaceFormat(int(videoStream.BitDepth))
-
 	// Video filter chain
-	// For simplified QSV, we need scale_qsv instead of hwupload
-	// scale_qsv handles both upload and scaling
+	// VAAPI decode outputs in vaapi format, need to convert to QSV for encoding
+	// Use hwmap to transfer from VAAPI to QSV device, then scale/pad in QSV
 	var vfParts []string
 	if isWebRipLike {
-		// WebRip: pad to even dimensions, set SAR, use scale_qsv for format conversion
+		// WebRip: map VAAPI->QSV, then pad and set SAR in QSV
 		vfParts = append(vfParts,
-			"pad=ceil(iw/2)*2:ceil(ih/2)*2",
+			"hwmap=derive_device=qsv:mode=read",
+			"scale_qsv=w='if(gt(iw,iw*sar),iw,iw*sar)':h='if(gt(iw,iw*sar),iw/sar,ih)'",
+			"scale_qsv=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
-			fmt.Sprintf("scale_qsv=format=%s", surfaceFormat),
 		)
 	} else {
-		// Non-WebRip: just use scale_qsv for format conversion
+		// Non-WebRip: map VAAPI->QSV, then pad in QSV
 		vfParts = append(vfParts,
-			"pad=ceil(iw/2)*2:ceil(ih/2)*2",
+			"hwmap=derive_device=qsv:mode=read",
+			"scale_qsv=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
-			fmt.Sprintf("scale_qsv=format=%s", surfaceFormat),
 		)
 	}
 
@@ -196,12 +203,8 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	return 0, nil
 }
 
-// selectVAAPIQSVDevices picks the best VAAPI/QSV device initialization for Intel Arc GPUs.
-// Returns VAAPI device init string, QSV device init string (derived from VAAPI), and filter device name.
-// For Intel Arc GPUs, initializing QSV via VAAPI is more reliable than direct QSV initialization.
-func selectVAAPIQSVDevices() (string, string, string) {
-	// Find the best render node
-	var renderNode string
+// findRenderNode finds the best DRI render node for VAAPI/QSV operations.
+func findRenderNode() string {
 	candidates := []string{
 		"/dev/dri/renderD128",
 		"/dev/dri/renderD129",
@@ -210,17 +213,23 @@ func selectVAAPIQSVDevices() (string, string, string) {
 	
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			renderNode = candidate
-			break
+			return candidate
 		}
 	}
 	
 	// If no specific render node found, try glob
-	if renderNode == "" {
-		if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil && len(matches) > 0 {
-			renderNode = matches[0]
-		}
+	if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil && len(matches) > 0 {
+		return matches[0]
 	}
+	
+	return ""
+}
+
+// selectVAAPIQSVDevices picks the best VAAPI/QSV device initialization for Intel Arc GPUs.
+// Returns VAAPI device init string, QSV device init string (derived from VAAPI), and filter device name.
+// For Intel Arc GPUs, initializing QSV via VAAPI is more reliable than direct QSV initialization.
+func selectVAAPIQSVDevices() (string, string, string) {
+	renderNode := findRenderNode()
 	
 	// For Intel Arc GPUs, use VAAPI->QSV initialization pattern:
 	// 1. Initialize VAAPI device first: vaapi=va:/dev/dri/renderD128
