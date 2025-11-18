@@ -168,27 +168,44 @@ func VerifyFFmpeg(ffmpegPath string) error {
 	// Run QSV test
 	log.Printf("Running QSV hardware acceleration test...")
 	
+	// First check if GPU devices are accessible
+	driDevices := []string{"/dev/dri/renderD128", "/dev/dri/card0", "/dev/dri/renderD129"}
+	hasGPUDevice := false
+	for _, device := range driDevices {
+		if _, err := os.Stat(device); err == nil {
+			log.Printf("Found GPU device: %s", device)
+			hasGPUDevice = true
+		}
+	}
+	if !hasGPUDevice {
+		log.Printf("Warning: No GPU devices found in /dev/dri/")
+	}
+	
 	// Try different QSV initialization methods
+	// Format: -init_hw_device qsv=<name>[:<device>]
+	// Then use that name in -filter_hw_device
 	testMethods := []struct {
-		name   string
-		device string
+		initDevice   string
+		filterDevice string
+		description  string
 	}{
-		{"qsv=hw", "hw"},
-		{"qsv=hw:/dev/dri/renderD128", "hw"},
-		{"qsv=hw:/dev/dri/card0", "hw"},
+		{"qsv=qsv", "qsv", "QSV device (default)"},
+		{"qsv=qsv:/dev/dri/renderD128", "qsv", "QSV with renderD128"},
+		{"qsv=qsv:/dev/dri/card0", "qsv", "QSV with card0"},
 	}
 	
 	var lastErr error
 	var lastOutput string
 	
 	for _, method := range testMethods {
-		log.Printf("Trying QSV device: %s", method.device)
-		testCmd := exec.Command(
-			ffmpegPath,
+		log.Printf("Trying QSV device: %s (init: %s, filter: %s)", method.description, method.initDevice, method.filterDevice)
+		
+		// Build command with explicit arguments
+		args := []string{
 			"-hide_banner",
 			"-v", "error",
-			"-init_hw_device", method.device,
-			"-filter_hw_device", "hw",
+			"-init_hw_device", method.initDevice,
+			"-filter_hw_device", method.filterDevice,
 			"-f", "lavfi",
 			"-i", "testsrc2=s=1280x720:d=1",
 			"-vf", "format=nv12,hwupload=extra_hw_frames=64",
@@ -197,17 +214,21 @@ func VerifyFFmpeg(ffmpegPath string) error {
 			"-global_quality", "30",
 			"-f", "null",
 			"-",
-		)
+		}
 		
+		testCmd := exec.Command(ffmpegPath, args...)
 		testOutput, err := testCmd.CombinedOutput()
 		if err == nil {
-			log.Printf("QSV test passed with device: %s", method.device)
+			log.Printf("QSV test passed with device: %s", method.description)
 			return nil
 		}
 		
 		lastErr = err
 		lastOutput = string(testOutput)
-		log.Printf("QSV test failed with %s: %v", method.device, err)
+		log.Printf("QSV test failed with %s: %v", method.description, err)
+		if len(lastOutput) > 0 {
+			log.Printf("  Output: %s", strings.TrimSpace(lastOutput))
+		}
 	}
 	
 	// All methods failed
@@ -219,6 +240,10 @@ func VerifyFFmpeg(ffmpegPath string) error {
 	// Check for device access errors
 	if strings.Contains(outputStr, "Device creation failed") || strings.Contains(outputStr, "Generic error in an external library") {
 		return fmt.Errorf("QSV test failed: GPU device not accessible. Check: 1) GPU is available (run 'vainfo'), 2) Service user has access to /dev/dri/*, 3) Intel GPU drivers are installed. Error: %w (output: %s)", lastErr, outputStr)
+	}
+	// Check for invalid device specification (might indicate QSV not properly configured)
+	if strings.Contains(outputStr, "Invalid device specification") || strings.Contains(outputStr, "unknown device type") {
+		return fmt.Errorf("QSV test failed: Invalid device specification. This may indicate: 1) QSV not properly compiled in ffmpeg, 2) GPU drivers not installed, 3) Try running 'vainfo' to verify GPU access. Error: %w (output: %s)", lastErr, outputStr)
 	}
 	return fmt.Errorf("QSV test failed: %w (output: %s)", lastErr, outputStr)
 }
