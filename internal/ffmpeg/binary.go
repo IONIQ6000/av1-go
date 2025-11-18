@@ -167,33 +167,59 @@ func VerifyFFmpeg(ffmpegPath string) error {
 
 	// Run QSV test
 	log.Printf("Running QSV hardware acceleration test...")
-	testCmd := exec.Command(
-		ffmpegPath,
-		"-hide_banner",
-		"-v", "error",
-		"-init_hw_device", "qsv=hw",
-		"-filter_hw_device", "hw",
-		"-f", "lavfi",
-		"-i", "testsrc2=s=1280x720:d=1",
-		"-vf", "format=nv12,hwupload=extra_hw_frames=64",
-		"-frames:v", "1",
-		"-c:v", "av1_qsv",
-		"-global_quality", "30",
-		"-f", "null",
-		"-",
-	)
-
-	testOutput, err := testCmd.CombinedOutput()
-	if err != nil {
-		outputStr := string(testOutput)
-		// Check for common library missing errors
-		if strings.Contains(outputStr, "libva-drm.so") || strings.Contains(outputStr, "cannot open shared object file") {
-			return fmt.Errorf("QSV test failed: missing VA-API libraries. Install with: sudo apt-get install libva-drm2 libva2 intel-media-va-driver-non-free libdrm-intel1. Error: %w (output: %s)", err, outputStr)
-		}
-		return fmt.Errorf("QSV test failed: %w (output: %s)", err, outputStr)
+	
+	// Try different QSV initialization methods
+	testMethods := []struct {
+		name   string
+		device string
+	}{
+		{"qsv=hw", "hw"},
+		{"qsv=hw:/dev/dri/renderD128", "hw"},
+		{"qsv=hw:/dev/dri/card0", "hw"},
 	}
-
-	log.Printf("ffmpeg verification passed")
-	return nil
+	
+	var lastErr error
+	var lastOutput string
+	
+	for _, method := range testMethods {
+		log.Printf("Trying QSV device: %s", method.device)
+		testCmd := exec.Command(
+			ffmpegPath,
+			"-hide_banner",
+			"-v", "error",
+			"-init_hw_device", method.device,
+			"-filter_hw_device", "hw",
+			"-f", "lavfi",
+			"-i", "testsrc2=s=1280x720:d=1",
+			"-vf", "format=nv12,hwupload=extra_hw_frames=64",
+			"-frames:v", "1",
+			"-c:v", "av1_qsv",
+			"-global_quality", "30",
+			"-f", "null",
+			"-",
+		)
+		
+		testOutput, err := testCmd.CombinedOutput()
+		if err == nil {
+			log.Printf("QSV test passed with device: %s", method.device)
+			return nil
+		}
+		
+		lastErr = err
+		lastOutput = string(testOutput)
+		log.Printf("QSV test failed with %s: %v", method.device, err)
+	}
+	
+	// All methods failed
+	outputStr := lastOutput
+	// Check for common library missing errors
+	if strings.Contains(outputStr, "libva-drm.so") || strings.Contains(outputStr, "cannot open shared object file") {
+		return fmt.Errorf("QSV test failed: missing VA-API libraries. Install with: sudo apt-get install libva-drm2 libva2 intel-media-va-driver-non-free libdrm-intel1. Error: %w (output: %s)", lastErr, outputStr)
+	}
+	// Check for device access errors
+	if strings.Contains(outputStr, "Device creation failed") || strings.Contains(outputStr, "Generic error in an external library") {
+		return fmt.Errorf("QSV test failed: GPU device not accessible. Check: 1) GPU is available (run 'vainfo'), 2) Service user has access to /dev/dri/*, 3) Intel GPU drivers are installed. Error: %w (output: %s)", lastErr, outputStr)
+	}
+	return fmt.Errorf("QSV test failed: %w (output: %s)", lastErr, outputStr)
 }
 

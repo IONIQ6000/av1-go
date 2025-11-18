@@ -148,6 +148,9 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
+# GPU device access
+SupplementaryGroups=video render
+
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
