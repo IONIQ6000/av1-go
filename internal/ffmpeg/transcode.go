@@ -21,15 +21,19 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
-	initDevice, filterDevice, hwaccelDevice := selectQSVDevices()
-	log.Printf("Using QSV devices: init=%s, filter=%s, hwaccel_device=%s", initDevice, filterDevice, hwaccelDevice)
+	// For Intel Arc GPUs, use VAAPI-based QSV initialization
+	// This is more reliable than direct QSV device creation
+	vaapiDevice, qsvDevice, filterDevice := selectVAAPIQSVDevices()
+	log.Printf("Using VAAPI-QSV devices: vaapi=%s, qsv=%s, filter=%s", vaapiDevice, qsvDevice, filterDevice)
 
 	// Build command arguments
-	// Simplified approach for Intel Arc GPUs - let ffmpeg auto-detect devices
+	// Initialize VAAPI first, then derive QSV from it
 	args := []string{
 		"-hide_banner",
 		"-hwaccel", "qsv",
-		"-init_hw_device", initDevice,
+		"-hwaccel_output_format", "qsv",
+		"-init_hw_device", vaapiDevice,  // Initialize VAAPI first
+		"-init_hw_device", qsvDevice,    // Derive QSV from VAAPI
 		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
@@ -197,11 +201,10 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	return 0, nil
 }
 
-// selectQSVDevices picks the best available init/filter device pair for QSV.
-// Returns init device string, filter device name, and hwaccel_device path.
-// For Intel Arc GPUs, we need both -hwaccel_device and -init_hw_device.
-// Uses the same patterns as the verification test to ensure consistency.
-func selectQSVDevices() (string, string, string) {
+// selectVAAPIQSVDevices picks the best VAAPI/QSV device initialization for Intel Arc GPUs.
+// Returns VAAPI device init string, QSV device init string (derived from VAAPI), and filter device name.
+// For Intel Arc GPUs, initializing QSV via VAAPI is more reliable than direct QSV initialization.
+func selectVAAPIQSVDevices() (string, string, string) {
 	// Find the best render node
 	var renderNode string
 	candidates := []string{
@@ -224,8 +227,16 @@ func selectQSVDevices() (string, string, string) {
 		}
 	}
 	
-	// For Intel Arc GPUs, simpler is better - let ffmpeg auto-detect
-	// Explicit device paths can cause MFX session errors
-	// Just use qsv without device specification
-	return "qsv", "qsv", ""
+	// For Intel Arc GPUs, use VAAPI->QSV initialization pattern:
+	// 1. Initialize VAAPI device first: vaapi=va:/dev/dri/renderD128
+	// 2. Derive QSV from VAAPI: qsv=qsv@va
+	// This is more reliable than direct QSV initialization
+	if renderNode != "" {
+		vaapiInit := fmt.Sprintf("vaapi=va:%s", renderNode)
+		qsvInit := "qsv=qsv@va"  // Derive QSV from VAAPI device named "va"
+		return vaapiInit, qsvInit, "qsv"
+	}
+	
+	// Fallback: let ffmpeg auto-detect
+	return "vaapi=va", "qsv=qsv@va", "qsv"
 }
