@@ -83,10 +83,28 @@ func (m Model) View() string {
 	}
 	activePanel := renderPanel("ACTIVE TRANSCODE", activeBody, m.width-4)
 
-	tableWidth := maxInt(80, m.width-8)
-	jobsPanel := renderPanel("JOB QUEUE", renderJobTable(m.jobs, tableWidth), m.width-2)
-
 	statusBar := renderStatusBar(m.jobs, m.jobsDir, m.lastRefresh, m.width-2)
+
+	tableWidth := maxInt(80, m.width-8)
+
+	// Calculate how many lines we can devote to the job table body
+	titleHeight := lipgloss.Height(title)
+	topRowHeight := lipgloss.Height(topRow)
+	activeHeight := lipgloss.Height(activePanel)
+	statusHeight := lipgloss.Height(statusBar)
+	availableBody := m.height - (titleHeight + topRowHeight + activeHeight + statusHeight) - 4
+	if availableBody < 8 {
+		availableBody = 8
+	}
+
+	// Account for panel border/padding overhead (roughly 6 lines in total)
+	panelOverhead := 6
+	maxJobLines := availableBody - panelOverhead
+	if maxJobLines < 5 {
+		maxJobLines = 5
+	}
+
+	jobsPanel := renderPanel("JOB QUEUE", renderJobTable(m.jobs, tableWidth, maxJobLines), m.width-2)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		title,
@@ -250,9 +268,13 @@ func renderSummaryLine(label string, value int) string {
 }
 
 // renderJobTable renders the job table.
-func renderJobTable(jobs []*jobs.Job, width int) string {
+func renderJobTable(jobs []*jobs.Job, width int, maxLines int) string {
 	if len(jobs) == 0 {
 		return "No jobs found"
+	}
+
+	if maxLines < 2 {
+		maxLines = 2
 	}
 
 	// Calculate column widths
@@ -269,9 +291,24 @@ func renderJobTable(jobs []*jobs.Job, width int) string {
 	var rows []string
 	rows = append(rows, headerStyle.Render(header))
 
+	remaining := maxLines - 1
+	visibleCount := 0
+
 	for _, job := range jobs {
+		if remaining == 0 {
+			break
+		}
+
 		row := renderJobRow(job, colWidths)
 		rows = append(rows, row)
+		visibleCount++
+		remaining--
+	}
+
+	if len(jobs) > visibleCount {
+		rows = append(rows, mutedStyle.Render(
+			fmt.Sprintf("… %d additional jobs not shown (table truncated to keep layout readable)", len(jobs)-visibleCount),
+		))
 	}
 
 	return strings.Join(rows, "\n")
