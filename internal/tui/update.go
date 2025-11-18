@@ -49,6 +49,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.memPercent = memInfo.UsedPercent
 		}
 
+		// Update GPU usage
+		m.gpuPercent = getGPUUsage()
+
 		return m, nil
 
 	case tickMsg:

@@ -13,6 +13,7 @@ type Model struct {
 	jobs         []*jobs.Job
 	cpuPercent   float64
 	memPercent   float64
+	gpuPercent   float64
 	width        int
 	height       int
 	lastRefresh  time.Time
@@ -25,6 +26,7 @@ func NewModel(jobsDir string) Model {
 		jobs:        []*jobs.Job{},
 		cpuPercent:  0.0,
 		memPercent:  0.0,
+		gpuPercent:  0.0,
 		lastRefresh: time.Now(),
 	}
 }

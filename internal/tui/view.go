@@ -51,7 +51,7 @@ func (m Model) View() string {
 	sections = append(sections, titleStyle.Render("AV1 Transcoding Daemon"))
 
 	// System metrics
-	sections = append(sections, renderMetrics(m.cpuPercent, m.memPercent))
+	sections = append(sections, renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent))
 
 	// Job table
 	sections = append(sections, renderJobTable(m.jobs, m.width))
@@ -62,11 +62,12 @@ func (m Model) View() string {
 	return strings.Join(sections, "\n\n")
 }
 
-// renderMetrics renders CPU and memory usage bars.
-func renderMetrics(cpuPercent, memPercent float64) string {
+// renderMetrics renders CPU, memory, and GPU usage bars.
+func renderMetrics(cpuPercent, memPercent, gpuPercent float64) string {
 	cpuBar := renderBar("CPU", cpuPercent, 100)
 	memBar := renderBar("MEM", memPercent, 100)
-	return lipgloss.JoinHorizontal(lipgloss.Left, cpuBar, "  ", memBar)
+	gpuBar := renderBar("GPU", gpuPercent, 100)
+	return lipgloss.JoinHorizontal(lipgloss.Left, cpuBar, "  ", memBar, "  ", gpuBar)
 }
 
 // renderBar renders a progress bar.
