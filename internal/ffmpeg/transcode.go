@@ -21,20 +21,16 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
-	// For Intel Arc GPUs, use VAAPI-based QSV initialization
-	// This is more reliable than direct QSV device creation
-	vaapiDevice, qsvDevice, filterDevice := selectVAAPIQSVDevices()
-	log.Printf("Using VAAPI-QSV devices: vaapi=%s, qsv=%s, filter=%s", vaapiDevice, qsvDevice, filterDevice)
+	// Simplified approach for Intel Arc GPUs - NO init_hw_device
+	// Just use -hwaccel qsv and let ffmpeg handle device discovery
+	// This avoids MFX session errors with Arc GPUs
+	log.Printf("Using simple QSV mode (auto-detect devices)")
 
 	// Build command arguments
-	// Initialize VAAPI first, then derive QSV from it
+	// Minimal QSV setup - let ffmpeg auto-detect everything
 	args := []string{
 		"-hide_banner",
 		"-hwaccel", "qsv",
-		"-hwaccel_output_format", "qsv",
-		"-init_hw_device", vaapiDevice,  // Initialize VAAPI first
-		"-init_hw_device", qsvDevice,    // Derive QSV from VAAPI
-		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
 	}
@@ -73,23 +69,22 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	surfaceFormat := determineSurfaceFormat(int(videoStream.BitDepth))
 
 	// Video filter chain
-	// hwupload uses the device specified by -filter_hw_device automatically
+	// For simplified QSV, we need scale_qsv instead of hwupload
+	// scale_qsv handles both upload and scaling
 	var vfParts []string
 	if isWebRipLike {
-		// WebRip: pad to even dimensions, set SAR, format, hwupload
+		// WebRip: pad to even dimensions, set SAR, use scale_qsv for format conversion
 		vfParts = append(vfParts,
 			"pad=ceil(iw/2)*2:ceil(ih/2)*2",
 			"setsar=1",
-			fmt.Sprintf("format=%s", surfaceFormat),
-			"hwupload=extra_hw_frames=64",
+			fmt.Sprintf("scale_qsv=format=%s", surfaceFormat),
 		)
 	} else {
-		// Non-WebRip: still pad and format, but no timestamp flags
+		// Non-WebRip: just use scale_qsv for format conversion
 		vfParts = append(vfParts,
 			"pad=ceil(iw/2)*2:ceil(ih/2)*2",
 			"setsar=1",
-			fmt.Sprintf("format=%s", surfaceFormat),
-			"hwupload=extra_hw_frames=64",
+			fmt.Sprintf("scale_qsv=format=%s", surfaceFormat),
 		)
 	}
 
