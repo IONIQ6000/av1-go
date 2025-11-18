@@ -26,6 +26,11 @@ func main() {
 		cfg = config.DefaultConfig()
 	}
 	log.Printf("Using config: FFmpeg install dir: %s, Job state dir: %s", cfg.FFmpegInstallDir, cfg.JobStateDir)
+	log.Printf("Library roots configured: %d", len(cfg.LibraryRoots))
+	for i, root := range cfg.LibraryRoots {
+		log.Printf("  [%d] %s", i+1, root)
+	}
+	log.Printf("Min file size: %d bytes (%.2f GB)", cfg.MinBytes, float64(cfg.MinBytes)/(1024*1024*1024))
 
 	// Ensure ffmpeg is installed and verified
 	ffmpegPath, err := ffmpeg.EnsureFFmpeg(cfg.FFmpegInstallDir, cfg.FFmpegURL)
@@ -69,6 +74,7 @@ func main() {
 			if ext != ".mkv" && ext != ".mp4" && ext != ".m4v" {
 				return nil
 			}
+			log.Printf("Found media file: %s (ext: %s, size: %.2f GB)", path, ext, float64(info.Size())/(1024*1024*1024))
 
 			// Check for .av1skip marker
 			skipMarker := strings.TrimSuffix(path, ext) + ".av1skip"
@@ -93,7 +99,8 @@ func main() {
 
 			// Check file size
 			if info.Size() <= cfg.MinBytes {
-				reason := fmt.Sprintf("file < 2GB (size: %d bytes)", info.Size())
+				reason := fmt.Sprintf("file < 2GB (size: %d bytes, %.2f GB)", info.Size(), float64(info.Size())/(1024*1024*1024))
+				log.Printf("  → Skipped: %s", reason)
 				skipped = append(skipped, skippedFile{
 					path:   path,
 					reason: reason,
@@ -101,11 +108,14 @@ func main() {
 				metadata.WriteWhyFile(path, reason)
 				return nil
 			}
+			log.Printf("  → File size OK: %.2f GB", float64(info.Size())/(1024*1024*1024))
 
 			// Run ffprobe to get metadata
+			log.Printf("  → Running ffprobe...")
 			probeResult, err := metadata.ProbeFile(ffmpegPath, path)
 			if err != nil {
 				reason := fmt.Sprintf("ffprobe failed: %v", err)
+				log.Printf("  → Skipped: %s", reason)
 				skipped = append(skipped, skippedFile{
 					path:   path,
 					reason: reason,
@@ -117,6 +127,7 @@ func main() {
 			// Check if it's a video
 			if !probeResult.HasVideo {
 				reason := "not a video"
+				log.Printf("  → Skipped: %s", reason)
 				skipped = append(skipped, skippedFile{
 					path:   path,
 					reason: reason,
@@ -124,10 +135,15 @@ func main() {
 				metadata.WriteWhyFile(path, reason)
 				return nil
 			}
+			log.Printf("  → Video detected: codec=%s, resolution=%dx%d", 
+				probeResult.VideoStream.CodecName, 
+				probeResult.VideoStream.Width, 
+				probeResult.VideoStream.Height)
 
 			// Check if already AV1
 			if probeResult.HasAV1 {
 				reason := "already av1"
+				log.Printf("  → Skipped: %s", reason)
 				skipped = append(skipped, skippedFile{
 					path:   path,
 					reason: reason,
@@ -186,7 +202,8 @@ func main() {
 
 			candidates = append(candidates, path)
 			newJobs = append(newJobs, job)
-			log.Printf("Discovered file: %s (WebRip-like: %v)", path, probeResult.IsWebRipLike)
+			log.Printf("  → ✓ ACCEPTED: %s (WebRip-like: %v, codec: %s, resolution: %s)", 
+				path, probeResult.IsWebRipLike, job.SourceCodec, job.Resolution)
 
 			return nil
 		}); err != nil {
