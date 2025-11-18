@@ -174,6 +174,8 @@ func joinFilterParts(parts []string) string {
 // RunTranscode executes the ffmpeg transcode command and returns the exit code and any error.
 func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	cmd := exec.Command(ffmpegPath, args...)
+	// Set LD_LIBRARY_PATH to help static ffmpeg find dynamic VA-API libraries
+	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:"+os.Getenv("LD_LIBRARY_PATH"))
 
 	// Capture both stdout and stderr for logging
 	// Use stderr for better error visibility (ffmpeg outputs errors to stderr)

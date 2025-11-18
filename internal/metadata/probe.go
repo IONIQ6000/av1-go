@@ -105,6 +105,8 @@ func ProbeFile(ffmpegPath, filePath string) (*ProbeResult, error) {
 		"-show_format",
 		filePath,
 	)
+	// Set LD_LIBRARY_PATH to help static ffmpeg/ffprobe find dynamic libraries
+	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:"+os.Getenv("LD_LIBRARY_PATH"))
 
 	output, err := cmd.Output()
 	if err != nil {

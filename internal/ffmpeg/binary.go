@@ -293,6 +293,8 @@ func VerifyFFmpeg(ffmpegPath string) error {
 		}
 		
 		testCmd := exec.Command(ffmpegPath, args...)
+		// Set LD_LIBRARY_PATH to help static ffmpeg find dynamic VA-API libraries
+		testCmd.Env = append(os.Environ(), "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:"+os.Getenv("LD_LIBRARY_PATH"))
 		testOutput, err := testCmd.CombinedOutput()
 		if err == nil {
 			log.Printf("QSV test passed with device: %s", method.description)
@@ -309,6 +311,10 @@ func VerifyFFmpeg(ffmpegPath string) error {
 	
 	// All methods failed
 	outputStr := lastOutput
+	// Check for assertion failures (core dumps) - often means library loading issue
+	if strings.Contains(outputStr, "Assertion") || strings.Contains(outputStr, "core dumped") || strings.Contains(outputStr, "signal: aborted") {
+		return fmt.Errorf("QSV test failed: ffmpeg crashed during library loading. This usually means VA-API libraries are installed but not accessible. Check: 1) Libraries are in /lib/x86_64-linux-gnu (run 'ldconfig -p | grep libva'), 2) Service user can access libraries, 3) Try running 'vainfo' as the service user. Error: %w (output: %s)", lastErr, outputStr)
+	}
 	// Check for common library missing errors
 	if strings.Contains(outputStr, "libva-drm.so") || strings.Contains(outputStr, "cannot open shared object file") {
 		return fmt.Errorf("QSV test failed: missing VA-API libraries. Install with: sudo apt-get install libva-drm2 libva2 intel-media-va-driver-non-free libdrm-intel1. Error: %w (output: %s)", lastErr, outputStr)
