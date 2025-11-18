@@ -18,7 +18,13 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	// Load configuration
-	cfg := config.DefaultConfig()
+	// Try to load from /etc/av1qsvd/config.json, fallback to default
+	configPath := "/etc/av1qsvd/config.json"
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		log.Printf("Failed to load config from %s, using defaults: %v", configPath, err)
+		cfg = config.DefaultConfig()
+	}
 	log.Printf("Using config: FFmpeg install dir: %s, Job state dir: %s", cfg.FFmpegInstallDir, cfg.JobStateDir)
 
 	// Ensure ffmpeg is installed and verified
