@@ -6,17 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // ProbeResult contains the parsed ffprobe output for a media file.
 type ProbeResult struct {
-	Format      FormatInfo   `json:"format"`
-	Streams     []StreamInfo `json:"streams"`
-	HasVideo    bool
-	HasAV1      bool
+	Format       FormatInfo   `json:"format"`
+	Streams      []StreamInfo `json:"streams"`
+	HasVideo     bool
+	HasAV1       bool
 	IsWebRipLike bool
-	VideoStream *StreamInfo // Main video stream (first or default-disposition)
+	VideoStream  *StreamInfo // Main video stream (first or default-disposition)
 }
 
 // FormatInfo contains format-level metadata from ffprobe.
@@ -28,15 +29,51 @@ type FormatInfo struct {
 
 // StreamInfo contains stream-level metadata from ffprobe.
 type StreamInfo struct {
-	Index          int    `json:"index"`
-	CodecName      string `json:"codec_name"`
-	CodecType      string `json:"codec_type"`
-	Width          int    `json:"width"`
-	Height         int    `json:"height"`
-	AvgFrameRate   string `json:"avg_frame_rate"`
-	RFrameRate     string `json:"r_frame_rate"`
-	BitDepth       int    `json:"bits_per_raw_sample,omitempty"`
-	Disposition    map[string]int `json:"disposition"`
+	Index        int            `json:"index"`
+	CodecName    string         `json:"codec_name"`
+	CodecType    string         `json:"codec_type"`
+	Width        int            `json:"width"`
+	Height       int            `json:"height"`
+	AvgFrameRate string         `json:"avg_frame_rate"`
+	RFrameRate   string         `json:"r_frame_rate"`
+	BitDepth     FlexibleInt    `json:"bits_per_raw_sample,omitempty"`
+	Disposition  map[string]int `json:"disposition"`
+}
+
+// FlexibleInt is a helper type that can unmarshal ints represented as numbers or strings.
+type FlexibleInt int
+
+// UnmarshalJSON allows FlexibleInt to parse numeric JSON values that may be strings or numbers.
+func (fi *FlexibleInt) UnmarshalJSON(data []byte) error {
+	// Handle null
+	if string(data) == "null" {
+		*fi = 0
+		return nil
+	}
+
+	// Try as integer
+	var intVal int
+	if err := json.Unmarshal(data, &intVal); err == nil {
+		*fi = FlexibleInt(intVal)
+		return nil
+	}
+
+	// Try as string
+	var strVal string
+	if err := json.Unmarshal(data, &strVal); err == nil {
+		if strVal == "" {
+			*fi = 0
+			return nil
+		}
+		parsed, err := strconv.Atoi(strVal)
+		if err != nil {
+			return fmt.Errorf("invalid FlexibleInt value %q: %w", strVal, err)
+		}
+		*fi = FlexibleInt(parsed)
+		return nil
+	}
+
+	return fmt.Errorf("invalid FlexibleInt JSON: %s", string(data))
 }
 
 // ProbeFile runs ffprobe on a file and returns parsed metadata.
@@ -46,18 +83,18 @@ func ProbeFile(ffmpegPath, filePath string) (*ProbeResult, error) {
 	if ffmpegPath == "" {
 		return nil, fmt.Errorf("ffprobe failed: ffmpeg path is empty")
 	}
-	
+
 	// Try to use ffprobe if available (it's in the same directory as ffmpeg)
 	installDir := filepath.Dir(ffmpegPath)
 	ffprobePath := filepath.Join(installDir, "ffprobe")
-	
+
 	// Check if ffprobe exists
 	if _, err := os.Stat(ffprobePath); err != nil {
 		// ffprobe not found, return error
 		// ffmpeg doesn't support ffprobe flags, so we need ffprobe
 		return nil, fmt.Errorf("ffprobe not found at %s (required for probing)", ffprobePath)
 	}
-	
+
 	// Use ffprobe with proper flags
 	cmd := exec.Command(
 		ffprobePath,

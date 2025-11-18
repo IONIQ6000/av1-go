@@ -42,15 +42,15 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	// Stream mapping: start with all streams, then prune
 	args = append(args,
 		"-map", "0",
-		"-map", "-0:v",        // remove all video
-		"-map", "-0:t",        // remove attachments
+		"-map", "-0:v", // remove all video
+		"-map", "-0:t", // remove attachments
 		"-map", fmt.Sprintf("0:v:%d", videoIndex), // add only main video
-		"-map", "0:a?",        // all audio
+		"-map", "0:a?", // all audio
 		"-map", "-0:a:m:language:rus", // remove Russian audio
-		"-map", "-0:a:m:language:ru",  // remove Russian audio (alternate code)
-		"-map", "0:s?",        // all subtitles
+		"-map", "-0:a:m:language:ru", // remove Russian audio (alternate code)
+		"-map", "0:s?", // all subtitles
 		"-map", "-0:s:m:language:rus", // remove Russian subtitles
-		"-map", "-0:s:m:language:ru",  // remove Russian subtitles (alternate code)
+		"-map", "-0:s:m:language:ru", // remove Russian subtitles (alternate code)
 		"-map_chapters", "0",
 	)
 
@@ -58,7 +58,7 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	quality := determineQuality(videoStream.Height)
 
 	// Determine surface format based on bit depth
-	surfaceFormat := determineSurfaceFormat(videoStream.BitDepth)
+	surfaceFormat := determineSurfaceFormat(int(videoStream.BitDepth))
 
 	// Video filter chain
 	var vfParts []string
@@ -156,10 +156,10 @@ func joinFilterParts(parts []string) string {
 // RunTranscode executes the ffmpeg transcode command and returns the exit code and any error.
 func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	cmd := exec.Command(ffmpegPath, args...)
-	
+
 	// Capture both stdout and stderr for logging
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		// Try to extract exit code
 		if exitError, ok := err.(*exec.ExitError); ok {

@@ -53,7 +53,7 @@ func main() {
 			log.Fatalf("Failed to ensure ffmpeg: %v", err)
 		}
 	}
-	
+
 	// Validate ffmpegPath is set and executable
 	if ffmpegPath == "" {
 		log.Fatalf("ffmpeg path is empty!")
@@ -159,9 +159,9 @@ func main() {
 				metadata.WriteWhyFile(path, reason)
 				return nil
 			}
-			log.Printf("  → Video detected: codec=%s, resolution=%dx%d", 
-				probeResult.VideoStream.CodecName, 
-				probeResult.VideoStream.Width, 
+			log.Printf("  → Video detected: codec=%s, resolution=%dx%d",
+				probeResult.VideoStream.CodecName,
+				probeResult.VideoStream.Width,
 				probeResult.VideoStream.Height)
 
 			// Check if already AV1
@@ -186,18 +186,18 @@ func main() {
 
 			job.OriginalSize = info.Size()
 			job.IsWebRipLike = probeResult.IsWebRipLike
-			
+
 			// Populate metadata from probe result
 			if probeResult.VideoStream != nil {
 				job.SourceCodec = probeResult.VideoStream.CodecName
 				job.Resolution = fmt.Sprintf("%dx%d", probeResult.VideoStream.Width, probeResult.VideoStream.Height)
-				job.BitDepth = probeResult.VideoStream.BitDepth
+				job.BitDepth = int(probeResult.VideoStream.BitDepth)
 				job.FrameRate = probeResult.VideoStream.AvgFrameRate
 				if job.FrameRate == "" {
 					job.FrameRate = probeResult.VideoStream.RFrameRate
 				}
 			}
-			
+
 			// Count streams
 			audioCount := 0
 			subCount := 0
@@ -211,10 +211,10 @@ func main() {
 			}
 			job.AudioStreams = audioCount
 			job.SubStreams = subCount
-			
+
 			// Container from format
 			job.Container = probeResult.Format.FormatName
-			
+
 			// Estimate output size (rough estimate: AV1 is typically 50% of original for similar quality)
 			job.EstimatedSize = int64(float64(info.Size()) * 0.5)
 
@@ -226,7 +226,7 @@ func main() {
 
 			candidates = append(candidates, path)
 			newJobs = append(newJobs, job)
-			log.Printf("  → ✓ ACCEPTED: %s (WebRip-like: %v, codec: %s, resolution: %s)", 
+			log.Printf("  → ✓ ACCEPTED: %s (WebRip-like: %v, codec: %s, resolution: %s)",
 				path, probeResult.IsWebRipLike, job.SourceCodec, job.Resolution)
 
 			return nil
@@ -316,4 +316,3 @@ type skippedFile struct {
 	path   string
 	reason string
 }
-
