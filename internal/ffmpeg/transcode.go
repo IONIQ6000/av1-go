@@ -25,29 +25,15 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	log.Printf("Using QSV devices: init=%s, filter=%s, hwaccel_device=%s", initDevice, filterDevice, hwaccelDevice)
 
 	// Build command arguments
-	// For Intel Arc GPUs:
-	// - Use -init_hw_device to create QSV device for filters/encoding
-	// - Use -hwaccel qsv with -hwaccel_device for input decoding
-	// If initDevice already includes device path, don't duplicate with hwaccel_device
+	// Simplified approach for Intel Arc GPUs - let ffmpeg auto-detect devices
 	args := []string{
 		"-hide_banner",
 		"-hwaccel", "qsv",
-	}
-	
-	// Add hwaccel_device for input decoding (if device specified)
-	if hwaccelDevice != "" {
-		args = append(args, "-hwaccel_device", hwaccelDevice)
-	}
-	
-	// Add init_hw_device for filter chain (encoding)
-	// If initDevice already has device path, it will use that
-	// Otherwise, it will use the device from -hwaccel_device
-	args = append(args,
 		"-init_hw_device", initDevice,
 		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
-	)
+	}
 
 	// WebRip-specific input flags
 	if isWebRipLike {
@@ -238,15 +224,8 @@ func selectQSVDevices() (string, string, string) {
 		}
 	}
 	
-	// For Intel Arc GPUs, use the correct QSV initialization format:
-	// -init_hw_device qsv=qsv[:device] where device is optional
-	// -filter_hw_device qsv (the name after the =)
-	// The format "qsv=hw" is invalid - must use "qsv=qsv"
-	if renderNode != "" {
-		// Try with explicit device path first (most reliable for Arc GPUs)
-		return fmt.Sprintf("qsv=qsv:%s", renderNode), "qsv", renderNode
-	}
-	
-	// Fallback: let ffmpeg auto-detect (no device path)
-	return "qsv=qsv", "qsv", ""
+	// For Intel Arc GPUs, simpler is better - let ffmpeg auto-detect
+	// Explicit device paths can cause MFX session errors
+	// Just use qsv without device specification
+	return "qsv", "qsv", ""
 }
