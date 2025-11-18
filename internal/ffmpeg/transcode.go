@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,18 +21,28 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
-	initDevice, filterDevice := selectQSVDevices()
+	initDevice, filterDevice, hwaccelDevice := selectQSVDevices()
+	log.Printf("Using QSV devices: init=%s, filter=%s, hwaccel_device=%s", initDevice, filterDevice, hwaccelDevice)
 
 	// Build command arguments
-	// Use -hwaccel none to avoid conflicts, then init_hw_device creates QSV context
+	// For Intel Arc GPUs, use -hwaccel qsv with -hwaccel_device, plus init_hw_device for filters
 	args := []string{
 		"-hide_banner",
-		"-hwaccel", "none",
+		"-hwaccel", "qsv",
+	}
+	
+	// Add hwaccel_device if we have a specific device
+	if hwaccelDevice != "" {
+		args = append(args, "-hwaccel_device", hwaccelDevice)
+	}
+	
+	// Add init_hw_device for filter chain
+	args = append(args,
 		"-init_hw_device", initDevice,
 		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
-	}
+	)
 
 	// WebRip-specific input flags
 	if isWebRipLike {
@@ -194,42 +205,39 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 }
 
 // selectQSVDevices picks the best available init/filter device pair for QSV.
-// Returns init device string and filter device name.
-// Tries multiple methods: explicit device paths, then logical device names.
-func selectQSVDevices() (string, string) {
-	// Method 1: Try with explicit render node paths
+// Returns init device string, filter device name, and hwaccel_device path.
+// For Intel Arc GPUs, we need both -hwaccel_device and -init_hw_device.
+func selectQSVDevices() (string, string, string) {
+	// Find the best render node
+	var renderNode string
 	candidates := []string{
 		"/dev/dri/renderD128",
 		"/dev/dri/renderD129",
-		"/dev/dri/card0",
+		"/dev/dri/renderD130",
 	}
-
+	
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			// Try format: qsv=hw:/dev/dri/renderD128
-			return fmt.Sprintf("qsv=hw:%s", candidate), "hw"
+			renderNode = candidate
+			break
 		}
 	}
-
-	// Method 2: Try to discover any render node dynamically
-	if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil {
-		for _, match := range matches {
-			if _, err := os.Stat(match); err == nil {
-				return fmt.Sprintf("qsv=hw:%s", match), "hw"
-			}
+	
+	// If no specific render node found, try glob
+	if renderNode == "" {
+		if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil && len(matches) > 0 {
+			renderNode = matches[0]
 		}
 	}
-
-	// Method 3: Try with card nodes
-	if matches, err := filepath.Glob("/dev/dri/card*"); err == nil {
-		for _, match := range matches {
-			if _, err := os.Stat(match); err == nil {
-				return fmt.Sprintf("qsv=hw:%s", match), "hw"
-			}
-		}
+	
+	// For Intel Arc GPUs:
+	// - Use render node for hwaccel_device
+	// - Use qsv=hw for init_hw_device (can auto-detect or use render node)
+	if renderNode != "" {
+		// Try with explicit render node in init_hw_device
+		return fmt.Sprintf("qsv=hw@%s", renderNode), "hw", renderNode
 	}
-
-	// Method 4: Last resort - use logical device name without path
-	// This relies on system default device discovery
-	return "qsv=hw", "hw"
+	
+	// Fallback: let ffmpeg auto-detect everything
+	return "qsv=hw", "hw", ""
 }
