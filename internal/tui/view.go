@@ -23,6 +23,26 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("220"))
 
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(1, 2).
+			Margin(1, 1, 0, 0)
+
+	panelTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("213"))
+
+	mutedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
+
+	summaryLabelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
+
+	summaryValueStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("79"))
+
 	successStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("46"))
 
@@ -45,40 +65,65 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
-	var sections []string
+	title := titleStyle.Render("AV1 Transcoding Daemon - Detailed View")
 
-	// Title
-	sections = append(sections, titleStyle.Render("AV1 Transcoding Daemon - Detailed View"))
+	metricsWidth := maxInt(32, m.width/2-3)
+	if metricsWidth > 48 {
+		metricsWidth = 48
+	}
+	summaryWidth := maxInt(32, m.width-metricsWidth-6)
 
-	// System metrics
-	sections = append(sections, renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent))
+	metricsPanel := renderPanel("SYSTEM METRICS", renderMetrics(m.cpuPercent, m.memPercent, m.gpuPercent), metricsWidth)
+	summaryPanel := renderPanel("QUEUE SUMMARY", renderQueueSummary(m.jobs), summaryWidth)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, metricsPanel, summaryPanel)
 
-	// Active job details (if any job is running)
-	activeJobSection := renderActiveJob(m.jobs)
-	if activeJobSection != "" {
-		sections = append(sections, activeJobSection)
+	activeBody, hasActive := renderActiveJob(m.jobs)
+	if !hasActive {
+		activeBody = mutedStyle.Render("No jobs are currently running.")
+	}
+	activePanel := renderPanel("ACTIVE TRANSCODE", activeBody, m.width-4)
+
+	tableWidth := maxInt(80, m.width-8)
+	jobsPanel := renderPanel("JOB QUEUE", renderJobTable(m.jobs, tableWidth), m.width-2)
+
+	statusBar := renderStatusBar(m.jobs, m.jobsDir, m.lastRefresh, m.width-2)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		topRow,
+		activePanel,
+		jobsPanel,
+		statusBar,
+	)
+}
+
+// renderPanel wraps content inside a floating panel with a title.
+func renderPanel(title, body string, width int) string {
+	content := panelTitleStyle.Render(title)
+	if body != "" {
+		content += "\n" + body
+	} else {
+		content += "\n" + mutedStyle.Render("—")
 	}
 
-	// Job table
-	sections = append(sections, renderJobTable(m.jobs, m.width))
-
-	// Status bar
-	sections = append(sections, renderStatusBar(m.jobs, m.jobsDir, m.lastRefresh, m.width-2))
-
-	return strings.Join(sections, "\n")
+	if width > 0 {
+		return panelStyle.Width(width).Render(content)
+	}
+	return panelStyle.Render(content)
 }
 
 // renderMetrics renders CPU, memory, and GPU usage bars.
 func renderMetrics(cpuPercent, memPercent, gpuPercent float64) string {
-	cpuBar := renderBar("CPU", cpuPercent)
-	memBar := renderBar("MEM", memPercent)
-	gpuBar := renderBar("GPU", gpuPercent)
-	return lipgloss.JoinHorizontal(lipgloss.Left, cpuBar, "  ", memBar, "  ", gpuBar)
+	lines := []string{
+		renderBar("CPU", cpuPercent, 24),
+		renderBar("MEM", memPercent, 24),
+		renderBar("GPU", gpuPercent, 24),
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderBar renders a progress bar (all bars now use same format).
-func renderBar(label string, value float64) string {
-	width := 20
+func renderBar(label string, value float64, width int) string {
 	filled := int((value / 100.0) * float64(width))
 	if filled > width {
 		filled = width
@@ -91,7 +136,7 @@ func renderBar(label string, value float64) string {
 }
 
 // renderActiveJob renders detailed information about the currently active job.
-func renderActiveJob(jobList []*jobs.Job) string {
+func renderActiveJob(jobList []*jobs.Job) (string, bool) {
 	var runningJob *jobs.Job
 	for _, job := range jobList {
 		if job.Status == jobs.JobStatusRunning {
@@ -101,18 +146,18 @@ func renderActiveJob(jobList []*jobs.Job) string {
 	}
 
 	if runningJob == nil {
-		return ""
+		return "", false
 	}
 
 	var details []string
-	
+
 	// Header
 	details = append(details, headerStyle.Render("⚡ ACTIVE TRANSCODE"))
-	
+
 	// File information
 	fileName := filepath.Base(runningJob.SourcePath)
 	details = append(details, fmt.Sprintf("File: %s", fileName))
-	
+
 	// Source details
 	if runningJob.Resolution != "" {
 		details = append(details, fmt.Sprintf("Resolution: %s", runningJob.Resolution))
@@ -130,7 +175,7 @@ func renderActiveJob(jobList []*jobs.Job) string {
 	if runningJob.Container != "" {
 		details = append(details, fmt.Sprintf("Container: %s", runningJob.Container))
 	}
-	
+
 	// Stream counts
 	streamInfo := []string{}
 	if runningJob.AudioStreams > 0 {
@@ -142,27 +187,66 @@ func renderActiveJob(jobList []*jobs.Job) string {
 	if len(streamInfo) > 0 {
 		details = append(details, fmt.Sprintf("Streams: %s", strings.Join(streamInfo, ", ")))
 	}
-	
+
 	// Sizes
 	details = append(details, fmt.Sprintf("Original Size: %s", formatSize(runningJob.OriginalSize)))
 	if runningJob.EstimatedSize > 0 {
 		estSavings := float64(runningJob.OriginalSize-runningJob.EstimatedSize) / float64(runningJob.OriginalSize) * 100
-		details = append(details, fmt.Sprintf("Estimated Size: %s (%.1f%% reduction)", 
+		details = append(details, fmt.Sprintf("Estimated Size: %s (%.1f%% reduction)",
 			formatSize(runningJob.EstimatedSize), estSavings))
 	}
-	
+
 	// Processing time
 	if runningJob.StartedAt != nil {
 		elapsed := time.Since(*runningJob.StartedAt)
 		details = append(details, fmt.Sprintf("Elapsed Time: %s", formatElapsed(elapsed)))
 	}
-	
+
 	// WebRip indicator
 	if runningJob.IsWebRipLike {
 		details = append(details, "Type: WebRip (VFR/odd dimensions)")
 	}
-	
-	return runningStyle.Render(strings.Join(details, "\n"))
+
+	return runningStyle.Render(strings.Join(details, "\n")), true
+}
+
+// renderQueueSummary builds a quick status snapshot similar to floating widgets in btop.
+func renderQueueSummary(jobList []*jobs.Job) string {
+	var total, pending, running, success, failed, skipped int
+
+	for _, job := range jobList {
+		total++
+		switch job.Status {
+		case jobs.JobStatusPending:
+			pending++
+		case jobs.JobStatusRunning:
+			running++
+		case jobs.JobStatusSuccess:
+			success++
+		case jobs.JobStatusFailed:
+			failed++
+		case jobs.JobStatusSkipped:
+			skipped++
+		}
+	}
+
+	lines := []string{
+		renderSummaryLine("TOTAL", total),
+		renderSummaryLine("PENDING", pending),
+		renderSummaryLine("RUNNING", running),
+		renderSummaryLine("SUCCESS", success),
+		renderSummaryLine("FAILED", failed),
+		renderSummaryLine("SKIPPED", skipped),
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func renderSummaryLine(label string, value int) string {
+	return fmt.Sprintf("%s %s",
+		summaryLabelStyle.Render(fmt.Sprintf("%-8s", label)),
+		summaryValueStyle.Render(fmt.Sprintf("%4d", value)),
+	)
 }
 
 // renderJobTable renders the job table.
@@ -248,7 +332,7 @@ func formatElapsed(d time.Duration) string {
 	hours := int(d.Hours())
 	minutes := int(d.Minutes()) % 60
 	seconds := int(d.Seconds()) % 60
-	
+
 	if hours > 0 {
 		return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
 	}
@@ -406,4 +490,11 @@ func renderStatusBar(jobList []*jobs.Job, jobsDir string, lastRefresh time.Time,
 	}
 
 	return statusBarStyle.Render(statusText)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

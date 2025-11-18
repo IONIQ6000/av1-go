@@ -2,7 +2,9 @@ package ffmpeg
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/yourname/av1qsvd/internal/metadata"
 )
@@ -17,12 +19,15 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
+	initDevice, filterDevice := selectQSVDevices()
+
 	// Build command arguments
 	args := []string{
 		"-hide_banner",
-		"-hwaccel", "none",
-		"-init_hw_device", "qsv=hw",
-		"-filter_hw_device", "hw",
+		"-hwaccel", "qsv",
+		"-hwaccel_output_format", "qsv",
+		"-init_hw_device", initDevice,
+		"-filter_hw_device", filterDevice,
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
 	}
@@ -169,4 +174,32 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 	}
 
 	return 0, nil
+}
+
+// selectQSVDevices picks the best available init/filter device pair for QSV.
+// It prefers explicit /dev/dri paths when available but falls back to a logical device.
+func selectQSVDevices() (string, string) {
+	candidates := []string{
+		"/dev/dri/renderD128",
+		"/dev/dri/card0",
+		"/dev/dri/renderD129",
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return fmt.Sprintf("qsv=qsv:%s", candidate), "qsv"
+		}
+	}
+
+	// Try to discover any render node dynamically
+	if matches, err := filepath.Glob("/dev/dri/renderD*"); err == nil {
+		for _, match := range matches {
+			if _, err := os.Stat(match); err == nil {
+				return fmt.Sprintf("qsv=qsv:%s", match), "qsv"
+			}
+		}
+	}
+
+	// Last resort: rely on logical qsv device name
+	return "qsv=qsv", "qsv"
 }
