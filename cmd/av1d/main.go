@@ -1,0 +1,241 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/yourname/av1qsvd/internal/config"
+	"github.com/yourname/av1qsvd/internal/daemon"
+	"github.com/yourname/av1qsvd/internal/ffmpeg"
+	"github.com/yourname/av1qsvd/internal/jobs"
+	"github.com/yourname/av1qsvd/internal/metadata"
+)
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	// Load configuration
+	cfg := config.DefaultConfig()
+	log.Printf("Using config: FFmpeg install dir: %s, Job state dir: %s", cfg.FFmpegInstallDir, cfg.JobStateDir)
+
+	// Ensure ffmpeg is installed and verified
+	ffmpegPath, err := ffmpeg.EnsureFFmpeg(cfg.FFmpegInstallDir, cfg.FFmpegURL)
+	if err != nil {
+		log.Fatalf("Failed to ensure ffmpeg: %v", err)
+	}
+	log.Printf("ffmpeg ready at: %s", ffmpegPath)
+
+	// Load existing jobs
+	existingJobs, err := jobs.LoadAllJobs(cfg.JobStateDir)
+	if err != nil {
+		log.Printf("Warning: failed to load existing jobs: %v", err)
+		existingJobs = []*jobs.Job{}
+	}
+	log.Printf("Loaded %d existing jobs", len(existingJobs))
+
+	// Perform a single scan pass
+	if len(cfg.LibraryRoots) == 0 {
+		log.Printf("No library roots configured. Use DefaultConfig() and set LibraryRoots to scan directories.")
+		return
+	}
+
+	var candidates []string
+	var skipped []skippedFile
+	var newJobs []*jobs.Job
+
+	for _, root := range cfg.LibraryRoots {
+		log.Printf("Scanning library root: %s", root)
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				log.Printf("Error accessing %s: %v", path, err)
+				return nil // Continue walking
+			}
+
+			if info.IsDir() {
+				return nil
+			}
+
+			// Check if file has a media extension
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".mkv" && ext != ".mp4" && ext != ".m4v" {
+				return nil
+			}
+
+			// Check for .av1skip marker
+			skipMarker := strings.TrimSuffix(path, ext) + ".av1skip"
+			if _, err := os.Stat(skipMarker); err == nil {
+				reason := "marked with .av1skip"
+				skipped = append(skipped, skippedFile{
+					path:   path,
+					reason: reason,
+				})
+				metadata.WriteWhyFile(path, reason)
+				return nil
+			}
+
+			// Check if job already exists for this file
+			existingJob := jobs.FindJobBySourcePath(existingJobs, path)
+			if existingJob != nil {
+				// Skip files that already have jobs (unless they're pending and need re-evaluation)
+				if existingJob.Status != jobs.JobStatusPending {
+					return nil
+				}
+			}
+
+			// Check file size
+			if info.Size() <= cfg.MinBytes {
+				reason := fmt.Sprintf("file < 2GB (size: %d bytes)", info.Size())
+				skipped = append(skipped, skippedFile{
+					path:   path,
+					reason: reason,
+				})
+				metadata.WriteWhyFile(path, reason)
+				return nil
+			}
+
+			// Run ffprobe to get metadata
+			probeResult, err := metadata.ProbeFile(ffmpegPath, path)
+			if err != nil {
+				reason := fmt.Sprintf("ffprobe failed: %v", err)
+				skipped = append(skipped, skippedFile{
+					path:   path,
+					reason: reason,
+				})
+				metadata.WriteWhyFile(path, reason)
+				return nil
+			}
+
+			// Check if it's a video
+			if !probeResult.HasVideo {
+				reason := "not a video"
+				skipped = append(skipped, skippedFile{
+					path:   path,
+					reason: reason,
+				})
+				metadata.WriteWhyFile(path, reason)
+				return nil
+			}
+
+			// Check if already AV1
+			if probeResult.HasAV1 {
+				reason := "already av1"
+				skipped = append(skipped, skippedFile{
+					path:   path,
+					reason: reason,
+				})
+				metadata.WriteWhyFile(path, reason)
+				return nil
+			}
+
+			// File passed all checks - create or update job
+			var job *jobs.Job
+			if existingJob != nil {
+				job = existingJob
+			} else {
+				job = jobs.NewJob(path)
+			}
+
+			job.OriginalSize = info.Size()
+			job.IsWebRipLike = probeResult.IsWebRipLike
+
+			// Save job
+			if err := jobs.SaveJob(job, cfg.JobStateDir); err != nil {
+				log.Printf("Failed to save job for %s: %v", path, err)
+				return nil
+			}
+
+			candidates = append(candidates, path)
+			newJobs = append(newJobs, job)
+			log.Printf("Discovered file: %s (WebRip-like: %v)", path, probeResult.IsWebRipLike)
+
+			return nil
+		}); err != nil {
+			log.Printf("Error walking directory %s: %v", root, err)
+		}
+	}
+
+	// Print summary
+	fmt.Println("\n=== Scan Summary ===")
+	fmt.Printf("Candidates (queued as jobs): %d\n", len(candidates))
+	for _, path := range candidates {
+		fmt.Printf("  [CANDIDATE] %s\n", path)
+	}
+
+	fmt.Printf("\nSkipped files: %d\n", len(skipped))
+	for _, sf := range skipped {
+		fmt.Printf("  [SKIPPED] %s - reason: %s\n", sf.path, sf.reason)
+	}
+
+	fmt.Printf("\nCreated/updated %d jobs\n", len(newJobs))
+
+	// Process pending jobs (one at a time for v1)
+	pendingJobs := []*jobs.Job{}
+	for _, job := range existingJobs {
+		if job.Status == jobs.JobStatusPending {
+			pendingJobs = append(pendingJobs, job)
+		}
+	}
+	for _, job := range newJobs {
+		if job.Status == jobs.JobStatusPending {
+			pendingJobs = append(pendingJobs, job)
+		}
+	}
+
+	if len(pendingJobs) == 0 {
+		log.Printf("No pending jobs to process")
+		return
+	}
+
+	log.Printf("Processing %d pending jobs...", len(pendingJobs))
+
+	// Process jobs one at a time
+	for _, job := range pendingJobs {
+		log.Printf("Processing job %s: %s", job.ID, job.SourcePath)
+
+		// Re-probe file to get fresh metadata
+		probeResult, err := metadata.ProbeFile(ffmpegPath, job.SourcePath)
+		if err != nil {
+			log.Printf("Failed to probe file %s: %v", job.SourcePath, err)
+			job.Status = jobs.JobStatusFailed
+			job.Reason = fmt.Sprintf("ffprobe failed: %v", err)
+			jobs.SaveJob(job, cfg.JobStateDir)
+			continue
+		}
+
+		// Update job with fresh metadata
+		job.IsWebRipLike = probeResult.IsWebRipLike
+
+		// Process the job
+		daemonCfg := daemon.TranscodeConfig{
+			JobStateDir:  cfg.JobStateDir,
+			MaxSizeRatio: cfg.MaxSizeRatio,
+		}
+
+		if err := daemon.ProcessJob(job, ffmpegPath, probeResult, daemonCfg); err != nil {
+			log.Printf("Job %s failed: %v", job.ID, err)
+			continue
+		}
+
+		// Log result
+		switch job.Status {
+		case jobs.JobStatusSuccess:
+			savings := float64(job.OriginalSize-job.NewSize) / float64(job.OriginalSize) * 100
+			log.Printf("Job succeeded: %s - savings: %.1f%%", job.SourcePath, savings)
+		case jobs.JobStatusSkipped:
+			log.Printf("Job skipped: %s - reason: %s", job.SourcePath, job.Reason)
+		case jobs.JobStatusFailed:
+			log.Printf("Job failed: %s - reason: %s", job.SourcePath, job.Reason)
+		}
+	}
+
+	log.Printf("Finished processing jobs")
+}
+
+type skippedFile struct {
+	path   string
+	reason string
+}
+
