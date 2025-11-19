@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,27 +147,70 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		}
 	}
 
-	// Method 2: Read from intel_gpu_frequency (if available)
-	freqPath := filepath.Join(cardPath, "gt", "gt0", "intel_gpu_freq")
-	if data, err := os.ReadFile(freqPath); err == nil {
-		// Format: "act: 1200 MHz, req: 1200 MHz, idle: 200 MHz"
-		freqStr := strings.ToLower(string(data))
-		if strings.Contains(freqStr, "act:") {
-			// Try to extract actual frequency
-			parts := strings.Split(freqStr, "act:")
-			if len(parts) > 1 {
-				freqPart := strings.Split(parts[1], "mhz")[0]
-				freqPart = strings.TrimSpace(freqPart)
-				if actFreq, err := strconv.ParseFloat(freqPart, 64); err == nil {
-					// Try to find max frequency
-					maxFreqPath := filepath.Join(cardPath, "gt", "gt0", "rps_max_freq_mhz")
-					if maxData, err := os.ReadFile(maxFreqPath); err == nil {
-						if maxFreq, err := strconv.ParseFloat(strings.TrimSpace(string(maxData)), 64); err == nil && maxFreq > 0 {
-							usage := (actFreq / maxFreq) * 100.0
-							if usage > 100.0 {
-								usage = 100.0
+	// Method 2: Try reading from /sys/kernel/debug/dri (if debugfs is mounted)
+	// This requires debugfs to be mounted: mount -t debugfs none /sys/kernel/debug
+	debugPaths := []string{
+		"/sys/kernel/debug/dri/1/i915_engine_info",
+		"/sys/kernel/debug/dri/0/i915_engine_info",
+	}
+	for _, debugPath := range debugPaths {
+		if data, err := os.ReadFile(debugPath); err == nil {
+			// Parse engine info - look for busy percentages
+			// Format varies, but typically shows engine utilization
+			lines := strings.Split(string(data), "\n")
+			var totalBusy, count float64
+			for _, line := range lines {
+				line = strings.ToLower(line)
+				// Look for busy or utilization patterns
+				if strings.Contains(line, "busy") || strings.Contains(line, "util") {
+					// Try to extract percentage
+					fields := strings.Fields(line)
+					for _, field := range fields {
+						if strings.HasSuffix(field, "%") {
+							percentStr := strings.TrimSuffix(field, "%")
+							if busy, err := strconv.ParseFloat(percentStr, 64); err == nil {
+								if busy > 0 && busy <= 100 {
+									totalBusy += busy
+									count++
+								}
 							}
-							return usage
+						}
+					}
+				}
+			}
+			if count > 0 {
+				avgBusy := totalBusy / count
+				if avgBusy > 0 {
+					return avgBusy
+				}
+			}
+		}
+	}
+
+	// Method 3: Read from intel_gpu_frequency (if available)
+	// Try multiple GT paths
+	for gtNum := 0; gtNum < 4; gtNum++ {
+		freqPath := filepath.Join(cardPath, "gt", fmt.Sprintf("gt%d", gtNum), "intel_gpu_freq")
+		if data, err := os.ReadFile(freqPath); err == nil {
+			// Format: "act: 1200 MHz, req: 1200 MHz, idle: 200 MHz"
+			freqStr := strings.ToLower(string(data))
+			if strings.Contains(freqStr, "act:") {
+				// Try to extract actual frequency
+				parts := strings.Split(freqStr, "act:")
+				if len(parts) > 1 {
+					freqPart := strings.Split(parts[1], "mhz")[0]
+					freqPart = strings.TrimSpace(freqPart)
+					if actFreq, err := strconv.ParseFloat(freqPart, 64); err == nil {
+						// Try to find max frequency
+						maxFreqPath := filepath.Join(cardPath, "gt", fmt.Sprintf("gt%d", gtNum), "rps_max_freq_mhz")
+						if maxData, err := os.ReadFile(maxFreqPath); err == nil {
+							if maxFreq, err := strconv.ParseFloat(strings.TrimSpace(string(maxData)), 64); err == nil && maxFreq > 0 {
+								usage := (actFreq / maxFreq) * 100.0
+								if usage > 100.0 {
+									usage = 100.0
+								}
+								return usage
+							}
 						}
 					}
 				}
@@ -232,11 +276,21 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 func getGPUUsageFromIntelGPUTop() float64 {
 	// Try to run intel_gpu_top with -l flag (plain text output)
 	// Note: -l outputs continuously, so we use context timeout
+	// PMU access may require root or special permissions
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	
 	cmd := exec.CommandContext(ctx, "intel_gpu_top", "-l", "-s", "500")
 	output, err := cmd.CombinedOutput()
+	
+	// Check if PMU permission error
+	outputStr := string(output)
+	if strings.Contains(outputStr, "PMU") && strings.Contains(outputStr, "Permission denied") {
+		// PMU access denied - try with sudo if available, or skip
+		// For now, return 0 to fall back to other methods
+		return 0.0
+	}
+	
 	if err != nil {
 		// Context timeout is expected - we got the output we need
 		if ctx.Err() == context.DeadlineExceeded {
