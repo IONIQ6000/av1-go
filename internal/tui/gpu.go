@@ -33,6 +33,7 @@ func getGPUUsage() float64 {
 }
 
 // findIntelGPUCard finds the first Intel GPU card in /sys/class/drm
+// Returns the device path
 func findIntelGPUCard() string {
 	drmPath := "/sys/class/drm"
 	entries, err := os.ReadDir(drmPath)
@@ -40,6 +41,8 @@ func findIntelGPUCard() string {
 		return ""
 	}
 
+	// Try card0 first (usually primary), then card1, etc.
+	cards := []string{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -48,9 +51,13 @@ func findIntelGPUCard() string {
 		if !strings.HasPrefix(name, "card") {
 			continue
 		}
+		cards = append(cards, name)
+	}
 
+	// Sort to try card0 first
+	for _, cardName := range cards {
 		// Check if it's an Intel GPU by looking for vendor file
-		vendorPath := filepath.Join(drmPath, name, "device", "vendor")
+		vendorPath := filepath.Join(drmPath, cardName, "device", "vendor")
 		vendorData, err := os.ReadFile(vendorPath)
 		if err != nil {
 			continue
@@ -58,7 +65,7 @@ func findIntelGPUCard() string {
 
 		// Intel vendor ID is 0x8086
 		if strings.Contains(strings.ToLower(string(vendorData)), "8086") {
-			return filepath.Join(drmPath, name, "device")
+			return filepath.Join(drmPath, cardName, "device")
 		}
 	}
 
@@ -67,22 +74,60 @@ func findIntelGPUCard() string {
 
 // getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
 func getGPUUsageFromSysfs(cardPath string) float64 {
-	// Method 1: Read engine busy percentages (most accurate)
-	// Path: /sys/class/drm/cardX/gt/gt0/engines/*/busy
-	gtPath := filepath.Join(cardPath, "gt", "gt0", "engines")
-	if engines, err := os.ReadDir(gtPath); err == nil {
+	// Method 1: Try multiple GT paths (gt0, gt1, etc.)
+	// For Arc GPUs, the structure might be different
+	gtBase := filepath.Join(cardPath, "gt")
+	if gtDirs, err := os.ReadDir(gtBase); err == nil {
+		for _, gtDir := range gtDirs {
+			if !gtDir.IsDir() || !strings.HasPrefix(gtDir.Name(), "gt") {
+				continue
+			}
+			
+			// Try engines directory
+			enginesPath := filepath.Join(gtBase, gtDir.Name(), "engines")
+			if engines, err := os.ReadDir(enginesPath); err == nil {
+				var totalBusy, count float64
+				for _, engine := range engines {
+					if !engine.IsDir() {
+						continue
+					}
+					busyPath := filepath.Join(enginesPath, engine.Name(), "busy")
+					if data, err := os.ReadFile(busyPath); err == nil {
+						busyStr := strings.TrimSpace(string(data))
+						if busy, err := strconv.ParseFloat(busyStr, 64); err == nil {
+							// If it's already a percentage (0-100), use it directly
+							// If it's a ratio (0-1), multiply by 100
+							if busy <= 1.0 {
+								busy = busy * 100.0
+							}
+							totalBusy += busy
+							count++
+						}
+					}
+				}
+				if count > 0 {
+					avgBusy := totalBusy / count
+					if avgBusy > 0 {
+						return avgBusy
+					}
+				}
+			}
+		}
+	}
+	
+	// Method 1b: Try alternative engine paths (some kernels use different structure)
+	// Check for engines directly under device
+	altEnginesPath := filepath.Join(cardPath, "engines")
+	if engines, err := os.ReadDir(altEnginesPath); err == nil {
 		var totalBusy, count float64
 		for _, engine := range engines {
 			if !engine.IsDir() {
 				continue
 			}
-			busyPath := filepath.Join(gtPath, engine.Name(), "busy")
+			busyPath := filepath.Join(altEnginesPath, engine.Name(), "busy")
 			if data, err := os.ReadFile(busyPath); err == nil {
-				// Busy is typically a percentage (0-100) or a ratio
 				busyStr := strings.TrimSpace(string(data))
 				if busy, err := strconv.ParseFloat(busyStr, 64); err == nil {
-					// If it's already a percentage (0-100), use it directly
-					// If it's a ratio (0-1), multiply by 100
 					if busy <= 1.0 {
 						busy = busy * 100.0
 					}
@@ -187,23 +232,42 @@ func getGPUUsageFromIntelGPUTop() float64 {
 	// Command: intel_gpu_top -l -n 1
 	// This outputs one snapshot and exits
 	cmd := exec.Command("intel_gpu_top", "-l", "-n", "1")
+	// Set timeout context or use a short timeout
 	output, err := cmd.Output()
 	if err != nil {
 		return 0.0
 	}
 
 	// Parse output - intel_gpu_top shows engine utilization
-	// Look for lines like "RC6: X%", "Render/3D: X%", "Video/0: X%", etc.
+	// Example output format:
+	//   IMC read:     0.00 MiB/s
+	//   IMC write:    0.00 MiB/s
+	//   RC6:          99.99%
+	//   Render/3D:     0.00%
+	//   Blitter:       0.00%
+	//   Video/0:      45.23%  <-- This is what we want
+	//   Video/1:       0.00%
 	lines := strings.Split(string(output), "\n")
 	var totalUtil, count float64
 	
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		// Look for percentage patterns: "Render/3D: 45.2%", "Video/0: 12.3%", etc.
-		if strings.Contains(line, "%") {
-			// Try to extract percentage
+		// Skip RC6 (power state, not utilization)
+		if strings.HasPrefix(line, "RC6:") {
+			continue
+		}
+		
+		// Look for engine utilization lines (Render, Video, Blitter, etc.)
+		// Format: "Engine Name: XX.XX%"
+		if strings.Contains(line, "%") && (strings.Contains(line, "Video") || 
+			strings.Contains(line, "Render") || strings.Contains(line, "Blitter") ||
+			strings.Contains(line, "Compute") || strings.Contains(line, "VCS") ||
+			strings.Contains(line, "VECS")) {
+			
+			// Extract percentage - look for the last number with % sign
 			parts := strings.Fields(line)
-			for _, part := range parts {
+			for i := len(parts) - 1; i >= 0; i-- {
+				part := parts[i]
 				if strings.HasSuffix(part, "%") {
 					percentStr := strings.TrimSuffix(part, "%")
 					if util, err := strconv.ParseFloat(percentStr, 64); err == nil {
@@ -213,6 +277,7 @@ func getGPUUsageFromIntelGPUTop() float64 {
 							count++
 						}
 					}
+					break
 				}
 			}
 		}
