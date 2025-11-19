@@ -77,6 +77,52 @@ func findIntelGPUCard() string {
 	return ""
 }
 
+// walkDrmDirs recursively searches for drm/cardX/gt/gtY directories
+func walkDrmDirs(basePath string, paths *[]string) {
+	// Limit depth to avoid infinite recursion
+	if len(*paths) > 20 {
+		return
+	}
+	
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return
+	}
+	
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		
+		entryPath := filepath.Join(basePath, entry.Name())
+		
+		// Check if this is a drm directory
+		if entry.Name() == "drm" {
+			// Look for card directories
+			if cardEntries, err := os.ReadDir(entryPath); err == nil {
+				for _, cardEntry := range cardEntries {
+					if strings.HasPrefix(cardEntry.Name(), "card") {
+						cardPath := filepath.Join(entryPath, cardEntry.Name(), "gt")
+						if gtEntries, err := os.ReadDir(cardPath); err == nil {
+							for _, gtEntry := range gtEntries {
+								if strings.HasPrefix(gtEntry.Name(), "gt") {
+									gtPath := filepath.Join(cardPath, gtEntry.Name())
+									*paths = append(*paths, gtPath)
+								}
+							}
+						}
+					}
+				}
+			}
+		} else {
+			// Recurse into subdirectories (but limit depth)
+			if strings.HasPrefix(entry.Name(), "0000:") || strings.HasPrefix(entry.Name(), "pci") {
+				walkDrmDirs(entryPath, paths)
+			}
+		}
+	}
+}
+
 // getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
 func getGPUUsageFromSysfs(cardPath string) float64 {
 	// Method 1: Resolve symlink to actual PCI device path
@@ -186,13 +232,31 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 
 	// Method 2: Try searching for frequency files directly
 	// Sometimes the path structure is different, so search for the files
-	searchPaths := []string{
-		"/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0",
-		"/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/drm/card1/gt/gt0",
-		filepath.Join(resolvedPath, "drm", "card1", "gt", "gt0"),
-		filepath.Join(resolvedPath, "drm", "card0", "gt", "gt0"),
+	// First, try to find all PCI devices that might contain the GPU
+	pciBase := "/sys/devices"
+	var searchPaths []string
+	
+	// Add hardcoded path from user's system
+	searchPaths = append(searchPaths, "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0")
+	
+	// Try to find PCI devices dynamically
+	if entries, err := os.ReadDir(pciBase); err == nil {
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "pci") {
+				// Look for drm subdirectories
+				pciPath := filepath.Join(pciBase, entry.Name())
+				walkDrmDirs(pciPath, &searchPaths)
+			}
+		}
 	}
 	
+	// Also try resolved path variations
+	searchPaths = append(searchPaths,
+		filepath.Join(resolvedPath, "drm", "card1", "gt", "gt0"),
+		filepath.Join(resolvedPath, "drm", "card0", "gt", "gt0"),
+	)
+	
+	// Try each search path
 	for _, searchPath := range searchPaths {
 		actFreqPath := filepath.Join(searchPath, "rps_act_freq_mhz")
 		maxFreqPath := filepath.Join(searchPath, "rps_max_freq_mhz")
@@ -212,9 +276,8 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 				if usage > 100.0 {
 					usage = 100.0
 				}
-				if usage >= 0 {
-					return usage
-				}
+				// Return even if 0% (idle GPU is valid)
+				return usage
 			}
 		}
 		
@@ -233,9 +296,7 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 					if usage > 100.0 {
 						usage = 100.0
 					}
-					if usage >= 0 {
-						return usage
-					}
+					return usage
 				}
 			}
 		}
