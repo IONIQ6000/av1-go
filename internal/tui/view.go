@@ -231,8 +231,12 @@ func renderActiveJob(jobList []*jobs.Job) (string, bool) {
 		savings := float64(runningJob.OriginalSize-runningJob.NewSize) / float64(runningJob.OriginalSize) * 100
 		details = append(details, fmt.Sprintf("Current Size: %s (%.1f%% reduction)",
 			formatSize(runningJob.NewSize), savings))
+	} else if runningJob.EstimatedSize > 0 {
+		// Show rough estimate when we don't have actual size yet
+		estSavings := float64(runningJob.OriginalSize-runningJob.EstimatedSize) / float64(runningJob.OriginalSize) * 100
+		details = append(details, fmt.Sprintf("Rough Est. Size: %s (~%.1f%% reduction)",
+			formatSize(runningJob.EstimatedSize), estSavings))
 	}
-	// Don't show EstimatedSize - it's fake data (was hardcoded to 50%)
 
 	// Processing time
 	if runningJob.StartedAt != nil {

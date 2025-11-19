@@ -142,11 +142,11 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	return args, nil
 }
 
-// determineQuality returns the global_quality value based on video height.
+// DetermineQuality returns the global_quality value based on video height.
 // height >= 1440 → 23
 // height >= 1080 && < 1440 → 24
 // < 1080 → 25
-func determineQuality(height int) int {
+func DetermineQuality(height int) int {
 	if height >= 1440 {
 		return 23
 	}
@@ -154,6 +154,11 @@ func determineQuality(height int) int {
 		return 24
 	}
 	return 25
+}
+
+// determineQuality is kept for internal use (backward compatibility)
+func determineQuality(height int) int {
+	return DetermineQuality(height)
 }
 
 // determineSurfaceFormat returns the surface format based on bit depth.

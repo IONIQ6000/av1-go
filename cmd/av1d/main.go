@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/yourname/av1qsvd/internal/config"
@@ -228,9 +229,12 @@ func main() {
 			// Container from format
 			job.Container = probeResult.Format.FormatName
 
-			// Don't set EstimatedSize - we don't have real data to estimate accurately
-			// Only show estimated size if we have actual data from similar transcodes
-			// For now, leave it as 0 and the TUI will only show it when we have NewSize
+			// Calculate estimated output size based on bitrate analysis
+			quality := 24 // default
+			if probeResult.VideoStream != nil {
+				quality = ffmpeg.DetermineQuality(probeResult.VideoStream.Height)
+			}
+			job.EstimatedSize = estimateOutputSize(info.Size(), probeResult, quality)
 
 			// Save job
 			if err := jobs.SaveJob(job, cfg.JobStateDir); err != nil {
@@ -273,6 +277,8 @@ func main() {
 	for _, sf := range skipped {
 		fmt.Printf("  [SKIPPED] %s - reason: %s\n", sf.path, sf.reason)
 	}
+
+	fmt.Println("\n=== Scan Complete ===")
 
 	fmt.Printf("\nCreated/updated %d jobs\n", len(newJobs))
 
@@ -337,6 +343,115 @@ func main() {
 	}
 
 	log.Printf("Finished processing jobs")
+}
+
+// estimateOutputSize calculates estimated output size based on actual bitrate analysis
+func estimateOutputSize(originalSize int64, probeResult *metadata.ProbeResult, quality int) int64 {
+	if probeResult.VideoStream == nil {
+		return 0
+	}
+
+	// Parse duration
+	duration, err := strconv.ParseFloat(probeResult.Format.Duration, 64)
+	if err != nil || duration <= 0 {
+		return 0
+	}
+
+	// Parse total bitrate (bits per second)
+	totalBitrate, err := strconv.ParseFloat(probeResult.Format.BitRate, 64)
+	if err != nil || totalBitrate <= 0 {
+		return 0
+	}
+
+	// Calculate video bitrate (subtract audio/subtitle bitrates)
+	videoBitrate := totalBitrate
+	for _, stream := range probeResult.Streams {
+		if stream.CodecType == "audio" || stream.CodecType == "subtitle" {
+			if stream.BitRate != "" {
+				if streamBR, err := strconv.ParseFloat(stream.BitRate, 64); err == nil {
+					videoBitrate -= streamBR
+				}
+			}
+		}
+	}
+
+	// If we couldn't parse stream bitrates, estimate audio overhead
+	// Typical: 1-2 audio streams at 192-384 kbps each, subtitles negligible
+	if videoBitrate >= totalBitrate*0.95 {
+		// Assume ~5% overhead for audio if we couldn't parse it
+		videoBitrate = totalBitrate * 0.95
+	}
+
+	// Estimate AV1 video bitrate based on quality, resolution, and frame rate
+	videoStream := probeResult.VideoStream
+	pixels := float64(videoStream.Width * videoStream.Height)
+
+	// Parse frame rate
+	fps := 24.0 // default
+	if videoStream.AvgFrameRate != "" {
+		// Parse "24000/1001" format
+		parts := strings.Split(videoStream.AvgFrameRate, "/")
+		if len(parts) == 2 {
+			num, err1 := strconv.ParseFloat(parts[0], 64)
+			den, err2 := strconv.ParseFloat(parts[1], 64)
+			if err1 == nil && err2 == nil && den > 0 {
+				fps = num / den
+			}
+		} else {
+			if f, err := strconv.ParseFloat(videoStream.AvgFrameRate, 64); err == nil {
+				fps = f
+			}
+		}
+	}
+
+	// Estimate AV1 bitrate based on quality setting
+	// Quality 23 (4K): ~0.15 bits per pixel per frame
+	// Quality 24 (1080p): ~0.12 bits per pixel per frame
+	// Quality 25 (<1080p): ~0.10 bits per pixel per frame
+	var bitsPerPixelPerFrame float64
+	switch quality {
+	case 23:
+		bitsPerPixelPerFrame = 0.15
+	case 24:
+		bitsPerPixelPerFrame = 0.12
+	case 25:
+		bitsPerPixelPerFrame = 0.10
+	default:
+		bitsPerPixelPerFrame = 0.12
+	}
+
+	// Calculate estimated AV1 video bitrate
+	estimatedAV1VideoBitrate := pixels * bitsPerPixelPerFrame * fps
+
+	// Calculate compression ratio
+	compressionRatio := estimatedAV1VideoBitrate / videoBitrate
+
+	// Estimate video size reduction
+	// Video portion of original file
+	originalVideoSize := int64(float64(originalSize) * (videoBitrate / totalBitrate))
+
+	// Estimated AV1 video size
+	estimatedAV1VideoSize := int64(float64(originalVideoSize) * compressionRatio)
+
+	// Audio/subtitle sizes stay the same (they're copied)
+	audioSubtitleSize := originalSize - originalVideoSize
+
+	// Estimated total size
+	estimatedTotalSize := estimatedAV1VideoSize + audioSubtitleSize
+
+	// Add container overhead (~1-2% for Matroska)
+	estimatedTotalSize = int64(float64(estimatedTotalSize) * 1.02)
+
+	// Ensure estimate is reasonable (not negative, not larger than original)
+	if estimatedTotalSize <= 0 {
+		return 0
+	}
+	if estimatedTotalSize > originalSize {
+		// If estimate is larger, cap at 95% of original (conservative)
+		estimatedTotalSize = int64(float64(originalSize) * 0.95)
+	}
+
+	return estimatedTotalSize
 }
 
 type skippedFile struct {
