@@ -123,9 +123,69 @@ func walkDrmDirs(basePath string, paths *[]string) {
 	}
 }
 
+// readFreqFiles reads frequency files and calculates GPU usage
+func readFreqFiles(gtPath string) float64 {
+	actFreqPath := filepath.Join(gtPath, "rps_act_freq_mhz")
+	maxFreqPath := filepath.Join(gtPath, "rps_max_freq_mhz")
+	
+	actFreqData, err1 := os.ReadFile(actFreqPath)
+	maxFreqData, err2 := os.ReadFile(maxFreqPath)
+	
+	if err1 == nil && err2 == nil {
+		actFreqStr := strings.TrimSpace(string(actFreqData))
+		maxFreqStr := strings.TrimSpace(string(maxFreqData))
+		
+		actFreq, err1 := strconv.ParseFloat(actFreqStr, 64)
+		maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
+		
+		if err1 == nil && err2 == nil && maxFreq > 0 {
+			usage := (actFreq / maxFreq) * 100.0
+			if usage > 100.0 {
+				usage = 100.0
+			}
+			return usage
+		}
+	}
+	
+	// Try rps_cur_freq_mhz as alternative
+	curFreqPath := filepath.Join(gtPath, "rps_cur_freq_mhz")
+	if curFreqData, err := os.ReadFile(curFreqPath); err == nil {
+		if maxFreqData, err2 := os.ReadFile(maxFreqPath); err2 == nil {
+			curFreqStr := strings.TrimSpace(string(curFreqData))
+			maxFreqStr := strings.TrimSpace(string(maxFreqData))
+			
+			curFreq, err1 := strconv.ParseFloat(curFreqStr, 64)
+			maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
+			
+			if err1 == nil && err2 == nil && maxFreq > 0 {
+				usage := (curFreq / maxFreq) * 100.0
+				if usage > 100.0 {
+					usage = 100.0
+				}
+				return usage
+			}
+		}
+	}
+	
+	return 0.0
+}
+
 // getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
 func getGPUUsageFromSysfs(cardPath string) float64 {
-	// Method 1: Resolve symlink to actual PCI device path
+	// Method 1: Try hardcoded path first (most reliable for known systems)
+	hardcodedPath := "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0"
+	// Check if files exist first
+	actFreqPath := filepath.Join(hardcodedPath, "rps_act_freq_mhz")
+	maxFreqPath := filepath.Join(hardcodedPath, "rps_max_freq_mhz")
+	if _, err1 := os.Stat(actFreqPath); err1 == nil {
+		if _, err2 := os.Stat(maxFreqPath); err2 == nil {
+			// Files exist, read them (even if GPU is idle, return 0%)
+			usage := readFreqFiles(hardcodedPath)
+			return usage
+		}
+	}
+	
+	// Method 2: Resolve symlink to actual PCI device path
 	// cardPath is like /sys/class/drm/card1/device which is a symlink
 	// The symlink points to something like ../../../0000:03:00.0
 	// We need to resolve it to the actual PCI device path
@@ -167,38 +227,13 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 							continue
 						}
 						
-						// Try to read frequency files
-						actFreqPath := filepath.Join(gtBase, gtDir.Name(), "rps_act_freq_mhz")
-						maxFreqPath := filepath.Join(gtBase, gtDir.Name(), "rps_max_freq_mhz")
-						
-						// Also try alternative names
-						if _, err := os.Stat(actFreqPath); err != nil {
-							actFreqPath = filepath.Join(gtBase, gtDir.Name(), "rps_cur_freq_mhz")
-						}
-						
-						actFreqData, err1 := os.ReadFile(actFreqPath)
-						maxFreqData, err2 := os.ReadFile(maxFreqPath)
-						
-						if err1 == nil && err2 == nil {
-							actFreqStr := strings.TrimSpace(string(actFreqData))
-							maxFreqStr := strings.TrimSpace(string(maxFreqData))
-							
-							actFreq, err1 := strconv.ParseFloat(actFreqStr, 64)
-							maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
-							
-							if err1 == nil && err2 == nil && maxFreq > 0 {
-								usage := (actFreq / maxFreq) * 100.0
-								if usage > 100.0 {
-									usage = 100.0
-								}
-								if usage > 0 {
-									return usage
-								}
-							}
+						gtPath := filepath.Join(gtBase, gtDir.Name())
+						if usage := readFreqFiles(gtPath); usage > 0 {
+							return usage
 						}
 						
 						// Try engines directory if it exists
-						enginesPath := filepath.Join(gtBase, gtDir.Name(), "engines")
+						enginesPath := filepath.Join(gtPath, "engines")
 						if engines, err := os.ReadDir(enginesPath); err == nil {
 							var totalBusy, count float64
 							for _, engine := range engines {
@@ -230,14 +265,10 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		}
 	}
 
-	// Method 2: Try searching for frequency files directly
+	// Method 3: Try searching for frequency files dynamically
 	// Sometimes the path structure is different, so search for the files
-	// First, try to find all PCI devices that might contain the GPU
 	pciBase := "/sys/devices"
 	var searchPaths []string
-	
-	// Add hardcoded path from user's system
-	searchPaths = append(searchPaths, "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0")
 	
 	// Try to find PCI devices dynamically
 	if entries, err := os.ReadDir(pciBase); err == nil {
@@ -258,48 +289,15 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 	
 	// Try each search path
 	for _, searchPath := range searchPaths {
-		actFreqPath := filepath.Join(searchPath, "rps_act_freq_mhz")
-		maxFreqPath := filepath.Join(searchPath, "rps_max_freq_mhz")
-		
-		actFreqData, err1 := os.ReadFile(actFreqPath)
-		maxFreqData, err2 := os.ReadFile(maxFreqPath)
-		
-		if err1 == nil && err2 == nil {
-			actFreqStr := strings.TrimSpace(string(actFreqData))
-			maxFreqStr := strings.TrimSpace(string(maxFreqData))
-			
-			actFreq, err1 := strconv.ParseFloat(actFreqStr, 64)
-			maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
-			
-			if err1 == nil && err2 == nil && maxFreq > 0 {
-				usage := (actFreq / maxFreq) * 100.0
-				if usage > 100.0 {
-					usage = 100.0
-				}
-				// Return even if 0% (idle GPU is valid)
-				return usage
-			}
+		if usage := readFreqFiles(searchPath); usage > 0 {
+			return usage
 		}
-		
-		// Also try rps_cur_freq_mhz as alternative
-		curFreqPath := filepath.Join(searchPath, "rps_cur_freq_mhz")
-		if curFreqData, err := os.ReadFile(curFreqPath); err == nil {
-			if maxFreqData, err2 := os.ReadFile(maxFreqPath); err2 == nil {
-				curFreqStr := strings.TrimSpace(string(curFreqData))
-				maxFreqStr := strings.TrimSpace(string(maxFreqData))
-				
-				curFreq, err1 := strconv.ParseFloat(curFreqStr, 64)
-				maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
-				
-				if err1 == nil && err2 == nil && maxFreq > 0 {
-					usage := (curFreq / maxFreq) * 100.0
-					if usage > 100.0 {
-						usage = 100.0
-					}
-					return usage
-				}
-			}
-		}
+	}
+	
+	// Method 4: Try hardcoded path again (in case it wasn't tried yet)
+	// This ensures we always try the known working path
+	if usage := readFreqFiles(hardcodedPath); usage >= 0 {
+		return usage
 	}
 
 	// Method 3: Try direct GT path (fallback for older kernels)
