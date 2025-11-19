@@ -14,28 +14,33 @@ import (
 // getGPUUsage attempts to get Intel GPU utilization percentage.
 // Returns 0.0 if unable to determine GPU usage.
 func getGPUUsage() float64 {
-	// Try to find Intel GPU card
+	// Try hardcoded path first (most reliable)
+	hardcodedPath := "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0"
+	actFreqPath := filepath.Join(hardcodedPath, "rps_act_freq_mhz")
+	maxFreqPath := filepath.Join(hardcodedPath, "rps_max_freq_mhz")
+	
+	// Check if files exist
+	if _, err1 := os.Stat(actFreqPath); err1 == nil {
+		if _, err2 := os.Stat(maxFreqPath); err2 == nil {
+			// Files exist, read them directly
+			usage := readFreqFiles(hardcodedPath)
+			return usage
+		}
+	}
+	
+	// Fallback: Try to find Intel GPU card and use dynamic path
 	cardPath := findIntelGPUCard()
 	if cardPath == "" {
 		return 0.0
 	}
 
-	// Try multiple methods to get GPU utilization (in order of preference)
-	
-	// Method 1: Read from sysfs engine utilization (most reliable if available)
-	// Use a sentinel value to distinguish "successful read of 0%" from "failed to read"
+	// Try sysfs method
 	usage := getGPUUsageFromSysfs(cardPath)
-	// Check if we successfully read (by verifying files exist)
-	// If files exist and we got a value (even 0%), return it
-	hardcodedPath := "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0"
-	actFreqPath := filepath.Join(hardcodedPath, "rps_act_freq_mhz")
-	if _, err := os.Stat(actFreqPath); err == nil {
-		// Files exist, so we successfully read (even if GPU is idle at 0%)
+	if usage >= 0 {
 		return usage
 	}
 
-	// Method 2: Try intel_gpu_top (may require PMU permissions)
-	// Only try if sysfs methods failed
+	// Try intel_gpu_top (may require PMU permissions)
 	if usage := getGPUUsageFromIntelGPUTop(); usage > 0 {
 		return usage
 	}
@@ -150,6 +155,7 @@ func readFreqFiles(gtPath string) float64 {
 			if usage > 100.0 {
 				usage = 100.0
 			}
+			// Return usage even if 0% (idle GPU is valid)
 			return usage
 		}
 	}
