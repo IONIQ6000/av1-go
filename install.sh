@@ -191,6 +191,25 @@ chown "${APP_USER}:${APP_GROUP}" /var/log/av1qsvd
 log_info "Reloading systemd..."
 systemctl daemon-reload
 
+# Install GPU fix service to run on boot (ensures GPU access persists after container restarts)
+log_info "Installing GPU access fix service..."
+GPU_FIX_SCRIPT="/usr/local/bin/av1d-gpu-fix.sh"
+GPU_FIX_SERVICE="/etc/systemd/system/av1d-gpu-fix.service"
+
+if [ -f "${SCRIPT_DIR}/av1d-gpu-fix.sh" ]; then
+    cp "${SCRIPT_DIR}/av1d-gpu-fix.sh" "${GPU_FIX_SCRIPT}"
+    chmod +x "${GPU_FIX_SCRIPT}"
+    
+    if [ -f "${SCRIPT_DIR}/av1d-gpu-fix.service" ]; then
+        cp "${SCRIPT_DIR}/av1d-gpu-fix.service" "${GPU_FIX_SERVICE}"
+        systemctl daemon-reload
+        systemctl enable av1d-gpu-fix.service 2>/dev/null || log_warn "Failed to enable GPU fix service"
+        log_info "GPU fix service installed (runs on boot to restore GPU access)"
+    fi
+else
+    log_warn "GPU fix script not found, skipping GPU fix service installation"
+fi
+
 log_info "Installation complete!"
 echo ""
 echo "Next steps:"

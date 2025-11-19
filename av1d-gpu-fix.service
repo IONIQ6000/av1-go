@@ -1,0 +1,13 @@
+[Unit]
+Description=AV1 Daemon GPU Access Fix
+After=systemd-udev-settle.service
+Before=av1d.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/av1d-gpu-fix.sh
+
+[Install]
+WantedBy=multi-user.target
+
