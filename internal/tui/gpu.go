@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // getGPUUsage attempts to get Intel GPU utilization percentage.
@@ -228,14 +230,20 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 
 // getGPUUsageFromIntelGPUTop tries to get GPU usage from intel_gpu_top command
 func getGPUUsageFromIntelGPUTop() float64 {
-	// Try to run intel_gpu_top with -l flag (one-shot, no interactive)
-	// Command: intel_gpu_top -l -n 1
-	// This outputs one snapshot and exits
-	cmd := exec.Command("intel_gpu_top", "-l", "-n", "1")
-	// Set timeout context or use a short timeout
-	output, err := cmd.Output()
+	// Try to run intel_gpu_top with -l flag (plain text output)
+	// Note: -l outputs continuously, so we use context timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	
+	cmd := exec.CommandContext(ctx, "intel_gpu_top", "-l", "-s", "500")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return 0.0
+		// Context timeout is expected - we got the output we need
+		if ctx.Err() == context.DeadlineExceeded {
+			// This is fine, we got output before timeout
+		} else {
+			return 0.0
+		}
 	}
 
 	// Parse output - intel_gpu_top shows engine utilization
