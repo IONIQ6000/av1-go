@@ -24,6 +24,7 @@ func getGPUUsage() float64 {
 		if _, err2 := os.Stat(maxFreqPath); err2 == nil {
 			// Files exist, read them directly
 			usage := readFreqFiles(hardcodedPath)
+			// Force return even if 0% - this ensures we return the actual value
 			return usage
 		}
 	}
