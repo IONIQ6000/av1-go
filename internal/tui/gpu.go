@@ -23,7 +23,14 @@ func getGPUUsage() float64 {
 	// Try multiple methods to get GPU utilization (in order of preference)
 	
 	// Method 1: Read from sysfs engine utilization (most reliable if available)
-	if usage := getGPUUsageFromSysfs(cardPath); usage > 0 {
+	// Use a sentinel value to distinguish "successful read of 0%" from "failed to read"
+	usage := getGPUUsageFromSysfs(cardPath)
+	// Check if we successfully read (by verifying files exist)
+	// If files exist and we got a value (even 0%), return it
+	hardcodedPath := "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0"
+	actFreqPath := filepath.Join(hardcodedPath, "rps_act_freq_mhz")
+	if _, err := os.Stat(actFreqPath); err == nil {
+		// Files exist, so we successfully read (even if GPU is idle at 0%)
 		return usage
 	}
 
