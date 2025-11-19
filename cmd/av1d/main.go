@@ -228,8 +228,9 @@ func main() {
 			// Container from format
 			job.Container = probeResult.Format.FormatName
 
-			// Estimate output size (rough estimate: AV1 is typically 50% of original for similar quality)
-			job.EstimatedSize = int64(float64(info.Size()) * 0.5)
+			// Don't set EstimatedSize - we don't have real data to estimate accurately
+			// Only show estimated size if we have actual data from similar transcodes
+			// For now, leave it as 0 and the TUI will only show it when we have NewSize
 
 			// Save job
 			if err := jobs.SaveJob(job, cfg.JobStateDir); err != nil {
