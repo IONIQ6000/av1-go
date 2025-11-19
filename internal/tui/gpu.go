@@ -20,18 +20,20 @@ func getGPUUsage() float64 {
 		return 0.0
 	}
 
-	// Try multiple methods to get GPU utilization
+	// Try multiple methods to get GPU utilization (in order of preference)
 	
-	// Method 1: Read from intel_gpu_top if available (most accurate)
-	if usage := getGPUUsageFromIntelGPUTop(); usage > 0 {
-		return usage
-	}
-
-	// Method 2: Read from sysfs frequency-based utilization
+	// Method 1: Read from sysfs engine utilization (most reliable if available)
 	if usage := getGPUUsageFromSysfs(cardPath); usage > 0 {
 		return usage
 	}
 
+	// Method 2: Try intel_gpu_top (may require PMU permissions)
+	// Only try if sysfs methods failed
+	if usage := getGPUUsageFromIntelGPUTop(); usage > 0 {
+		return usage
+	}
+
+	// If all methods fail, return 0.0
 	return 0.0
 }
 
@@ -77,7 +79,30 @@ func findIntelGPUCard() string {
 
 // getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
 func getGPUUsageFromSysfs(cardPath string) float64 {
-	// Method 1: Try multiple GT paths (gt0, gt1, etc.)
+	// Method 1: Try reading from PCI device path directly
+	// For Intel Arc GPUs, metrics might be under the PCI device
+	pciPath, err := os.Readlink(cardPath)
+	if err == nil {
+		// Resolve to absolute path
+		if !filepath.IsAbs(pciPath) {
+			pciPath = filepath.Join(filepath.Dir(cardPath), pciPath)
+		}
+		// Try to find frequency or utilization files
+		if files, err := filepath.Glob(filepath.Join(pciPath, "*freq*")); err == nil {
+			for _, freqFile := range files {
+				if data, err := os.ReadFile(freqFile); err == nil {
+					// Try to parse frequency
+					freqStr := strings.TrimSpace(string(data))
+					if freq, err := strconv.ParseFloat(freqStr, 64); err == nil && freq > 0 {
+						// This is a frequency, not utilization - skip for now
+						// We'll use it in frequency-based fallback
+					}
+				}
+			}
+		}
+	}
+
+	// Method 2: Try multiple GT paths (gt0, gt1, etc.)
 	// For Arc GPUs, the structure might be different
 	gtBase := filepath.Join(cardPath, "gt")
 	if gtDirs, err := os.ReadDir(gtBase); err == nil {
@@ -118,7 +143,7 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		}
 	}
 	
-	// Method 1b: Try alternative engine paths (some kernels use different structure)
+	// Method 3: Try alternative engine paths (some kernels use different structure)
 	// Check for engines directly under device
 	altEnginesPath := filepath.Join(cardPath, "engines")
 	if engines, err := os.ReadDir(altEnginesPath); err == nil {
