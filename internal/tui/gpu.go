@@ -81,16 +81,29 @@ func findIntelGPUCard() string {
 func getGPUUsageFromSysfs(cardPath string) float64 {
 	// Method 1: Resolve symlink to actual PCI device path
 	// cardPath is like /sys/class/drm/card1/device which is a symlink
+	// The symlink points to something like ../../../0000:03:00.0
 	// We need to resolve it to the actual PCI device path
 	resolvedPath, err := filepath.EvalSymlinks(cardPath)
 	if err != nil {
-		// If symlink resolution fails, try direct path
-		resolvedPath = cardPath
+		// If symlink resolution fails, try reading the symlink manually
+		if linkTarget, err := os.Readlink(cardPath); err == nil {
+			// Resolve relative symlink
+			if !filepath.IsAbs(linkTarget) {
+				resolvedPath = filepath.Join(filepath.Dir(cardPath), linkTarget)
+				// Clean the path to resolve ../
+				resolvedPath = filepath.Clean(resolvedPath)
+			} else {
+				resolvedPath = linkTarget
+			}
+		} else {
+			// If all else fails, try direct path
+			resolvedPath = cardPath
+		}
 	}
 	
 	// For Intel Arc GPUs, the GT directory is under drm/cardX/gt/gt0
 	// Path structure: /sys/devices/pci.../drm/card1/gt/gt0/
-	// Try to find the drm subdirectory
+	// The resolved path should be the PCI device, and drm/ is a subdirectory
 	drmPath := filepath.Join(resolvedPath, "drm")
 	if _, err := os.Stat(drmPath); err == nil {
 		// Look for card directories under drm
@@ -171,7 +184,64 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		}
 	}
 
-	// Method 2: Try direct GT path (fallback for older kernels)
+	// Method 2: Try searching for frequency files directly
+	// Sometimes the path structure is different, so search for the files
+	searchPaths := []string{
+		"/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0/drm/card1/gt/gt0",
+		"/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/drm/card1/gt/gt0",
+		filepath.Join(resolvedPath, "drm", "card1", "gt", "gt0"),
+		filepath.Join(resolvedPath, "drm", "card0", "gt", "gt0"),
+	}
+	
+	for _, searchPath := range searchPaths {
+		actFreqPath := filepath.Join(searchPath, "rps_act_freq_mhz")
+		maxFreqPath := filepath.Join(searchPath, "rps_max_freq_mhz")
+		
+		actFreqData, err1 := os.ReadFile(actFreqPath)
+		maxFreqData, err2 := os.ReadFile(maxFreqPath)
+		
+		if err1 == nil && err2 == nil {
+			actFreqStr := strings.TrimSpace(string(actFreqData))
+			maxFreqStr := strings.TrimSpace(string(maxFreqData))
+			
+			actFreq, err1 := strconv.ParseFloat(actFreqStr, 64)
+			maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
+			
+			if err1 == nil && err2 == nil && maxFreq > 0 {
+				usage := (actFreq / maxFreq) * 100.0
+				if usage > 100.0 {
+					usage = 100.0
+				}
+				if usage >= 0 {
+					return usage
+				}
+			}
+		}
+		
+		// Also try rps_cur_freq_mhz as alternative
+		curFreqPath := filepath.Join(searchPath, "rps_cur_freq_mhz")
+		if curFreqData, err := os.ReadFile(curFreqPath); err == nil {
+			if maxFreqData, err2 := os.ReadFile(maxFreqPath); err2 == nil {
+				curFreqStr := strings.TrimSpace(string(curFreqData))
+				maxFreqStr := strings.TrimSpace(string(maxFreqData))
+				
+				curFreq, err1 := strconv.ParseFloat(curFreqStr, 64)
+				maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
+				
+				if err1 == nil && err2 == nil && maxFreq > 0 {
+					usage := (curFreq / maxFreq) * 100.0
+					if usage > 100.0 {
+						usage = 100.0
+					}
+					if usage >= 0 {
+						return usage
+					}
+				}
+			}
+		}
+	}
+
+	// Method 3: Try direct GT path (fallback for older kernels)
 	gtBase := filepath.Join(cardPath, "gt")
 	if gtDirs, err := os.ReadDir(gtBase); err == nil {
 		for _, gtDir := range gtDirs {
