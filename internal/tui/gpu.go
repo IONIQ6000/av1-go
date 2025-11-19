@@ -138,50 +138,42 @@ func walkDrmDirs(basePath string, paths *[]string) {
 
 // readFreqFiles reads frequency files and calculates GPU usage
 func readFreqFiles(gtPath string) float64 {
-	actFreqPath := filepath.Join(gtPath, "rps_act_freq_mhz")
 	maxFreqPath := filepath.Join(gtPath, "rps_max_freq_mhz")
+	actFreqPath := filepath.Join(gtPath, "rps_act_freq_mhz")
 	
-	actFreqData, err1 := os.ReadFile(actFreqPath)
-	maxFreqData, err2 := os.ReadFile(maxFreqPath)
-	
-	if err1 == nil && err2 == nil {
-		actFreqStr := strings.TrimSpace(string(actFreqData))
-		maxFreqStr := strings.TrimSpace(string(maxFreqData))
-		
-		actFreq, err1 := strconv.ParseFloat(actFreqStr, 64)
-		maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
-		
-		if err1 == nil && err2 == nil && maxFreq > 0 {
-			usage := (actFreq / maxFreq) * 100.0
-			if usage > 100.0 {
-				usage = 100.0
-			}
-			// Return usage even if 0% (idle GPU is valid)
-			return usage
-		}
+	// Read max frequency first
+	maxFreqData, err := os.ReadFile(maxFreqPath)
+	if err != nil {
+		return 0.0
+	}
+	maxFreqStr := strings.TrimSpace(string(maxFreqData))
+	maxFreq, err := strconv.ParseFloat(maxFreqStr, 64)
+	if err != nil || maxFreq <= 0 {
+		return 0.0
 	}
 	
-	// Try rps_cur_freq_mhz as alternative
-	curFreqPath := filepath.Join(gtPath, "rps_cur_freq_mhz")
-	if curFreqData, err := os.ReadFile(curFreqPath); err == nil {
-		if maxFreqData, err2 := os.ReadFile(maxFreqPath); err2 == nil {
-			curFreqStr := strings.TrimSpace(string(curFreqData))
-			maxFreqStr := strings.TrimSpace(string(maxFreqData))
-			
-			curFreq, err1 := strconv.ParseFloat(curFreqStr, 64)
-			maxFreq, err2 := strconv.ParseFloat(maxFreqStr, 64)
-			
-			if err1 == nil && err2 == nil && maxFreq > 0 {
-				usage := (curFreq / maxFreq) * 100.0
-				if usage > 100.0 {
-					usage = 100.0
-				}
-				return usage
-			}
-		}
+	// Always use rps_act_freq_mhz - it shows actual frequency (0 when idle, >0 when working)
+	// rps_cur_freq_mhz shows max frequency even when idle, so it's not useful
+	actFreqData, err := os.ReadFile(actFreqPath)
+	if err != nil {
+		return 0.0
 	}
 	
-	return 0.0
+	actFreqStr := strings.TrimSpace(string(actFreqData))
+	actFreq, err := strconv.ParseFloat(actFreqStr, 64)
+	if err != nil || actFreq < 0 {
+		return 0.0
+	}
+	
+	// Calculate usage based on actual frequency
+	// When idle: actFreq = 0, usage = 0%
+	// When transcoding: actFreq = 1350 (example), usage = 1350/2450 = 55%
+	usage := (actFreq / maxFreq) * 100.0
+	if usage > 100.0 {
+		usage = 100.0
+	}
+	
+	return usage
 }
 
 // getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
