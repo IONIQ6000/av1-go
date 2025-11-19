@@ -306,9 +306,9 @@ func renderJobTable(jobs []*jobs.Job, width int, maxLines int) string {
 	// Calculate column widths
 	colWidths := calculateColumnWidths(width)
 
-	// Header - removed EST_SIZE (was fake data)
+	// Header - include EST_SIZE for rough estimates
 	header := renderRow(
-		[]string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"},
+		[]string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "EST_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"},
 		colWidths,
 		true,
 	)
@@ -413,6 +413,7 @@ func calculateColumnWidths(totalWidth int) map[string]int {
 		"CODEC":      8,
 		"RESOLUTION": 12,
 		"ORIG_SIZE":  11,
+		"EST_SIZE":   11,
 		"NEW_SIZE":   11,
 		"SAVINGS":    9,
 		"DURATION":   9,
@@ -421,8 +422,8 @@ func calculateColumnWidths(totalWidth int) map[string]int {
 
 	// Calculate FILE column width (remaining space)
 	usedWidth := widths["STATUS"] + widths["CODEC"] + widths["RESOLUTION"] +
-		widths["ORIG_SIZE"] + widths["NEW_SIZE"] +
-		widths["SAVINGS"] + widths["DURATION"] + widths["REASON"] + 8 // separators
+		widths["ORIG_SIZE"] + widths["EST_SIZE"] + widths["NEW_SIZE"] +
+		widths["SAVINGS"] + widths["DURATION"] + widths["REASON"] + 9 // separators
 	fileWidth := totalWidth - usedWidth - 2 // padding
 	if fileWidth < 15 {
 		fileWidth = 15
@@ -434,7 +435,7 @@ func calculateColumnWidths(totalWidth int) map[string]int {
 
 // renderRow renders a table row.
 func renderRow(columns []string, widths map[string]int, isHeader bool) string {
-	colNames := []string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"}
+	colNames := []string{"STATUS", "FILE", "CODEC", "RESOLUTION", "ORIG_SIZE", "EST_SIZE", "NEW_SIZE", "SAVINGS", "DURATION", "REASON"}
 	var parts []string
 	for i, colName := range colNames {
 		width := widths[colName]
@@ -466,6 +467,10 @@ func renderJobRow(job *jobs.Job, widths map[string]int) string {
 		resolution = "-"
 	}
 	origSize := formatSize(job.OriginalSize)
+	estSize := "-"
+	if job.EstimatedSize > 0 {
+		estSize = "~" + formatSize(job.EstimatedSize)
+	}
 	newSize := formatSize(job.NewSize)
 	// Only show savings if we have actual NewSize (real data)
 	savings := calculateSavings(job.OriginalSize, job.NewSize)
@@ -475,9 +480,8 @@ func renderJobRow(job *jobs.Job, widths map[string]int) string {
 		reason = "-"
 	}
 
-	// Removed estSize (EstimatedSize) - it was fake data (hardcoded 50%)
 	row := renderRow(
-		[]string{status, fileName, codec, resolution, origSize, newSize, savings, duration, reason},
+		[]string{status, fileName, codec, resolution, origSize, estSize, newSize, savings, duration, reason},
 		widths,
 		false,
 	)

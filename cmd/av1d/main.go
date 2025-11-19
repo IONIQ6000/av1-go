@@ -235,6 +235,12 @@ func main() {
 				quality = ffmpeg.DetermineQuality(probeResult.VideoStream.Height)
 			}
 			job.EstimatedSize = estimateOutputSize(info.Size(), probeResult, quality)
+			if job.EstimatedSize > 0 {
+				estGB := float64(job.EstimatedSize) / (1024 * 1024 * 1024)
+				log.Printf("  → Estimated output size: %.2f GB (rough estimate)", estGB)
+			} else {
+				log.Printf("  → Warning: Could not estimate output size (missing bitrate/duration data)")
+			}
 
 			// Save job
 			if err := jobs.SaveJob(job, cfg.JobStateDir); err != nil {
