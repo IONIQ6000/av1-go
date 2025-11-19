@@ -239,8 +239,21 @@ func main() {
 
 			candidates = append(candidates, path)
 			newJobs = append(newJobs, job)
-			log.Printf("  → ✓ ACCEPTED: %s (WebRip-like: %v, codec: %s, resolution: %s)",
-				path, probeResult.IsWebRipLike, job.SourceCodec, job.Resolution)
+			// Log classification decision with details
+			if probeResult.SourceDecision != nil {
+				log.Printf("  → ✓ ACCEPTED: %s (source: %s, score: %.1f, codec: %s, resolution: %s)",
+					path, probeResult.SourceDecision.Class.String(), probeResult.SourceDecision.Score, job.SourceCodec, job.Resolution)
+				if len(probeResult.SourceDecision.Reasons) > 0 {
+					log.Printf("    Classification reasons: %s", strings.Join(probeResult.SourceDecision.Reasons, "; "))
+				}
+				// Write classification info to sidecar file for debugging
+				if err := metadata.WriteClassificationInfo(path, probeResult.SourceDecision); err != nil {
+					log.Printf("  Warning: failed to write classification info: %v", err)
+				}
+			} else {
+				log.Printf("  → ✓ ACCEPTED: %s (WebRip-like: %v, codec: %s, resolution: %s)",
+					path, probeResult.IsWebRipLike, job.SourceCodec, job.Resolution)
+			}
 
 			return nil
 		}); err != nil {

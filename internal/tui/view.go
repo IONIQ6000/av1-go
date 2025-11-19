@@ -237,9 +237,11 @@ func renderActiveJob(jobList []*jobs.Job) (string, bool) {
 		details = append(details, fmt.Sprintf("Elapsed Time: %s", formatElapsed(elapsed)))
 	}
 
-	// WebRip indicator
+	// Source classification indicator
 	if runningJob.IsWebRipLike {
-		details = append(details, "Type: WebRip (VFR/odd dimensions)")
+		details = append(details, "Type: Web-like (web-safe flags enabled)")
+	} else {
+		details = append(details, "Type: Disc-like (standard flags)")
 	}
 
 	return runningStyle.Render(strings.Join(details, "\n")), true
