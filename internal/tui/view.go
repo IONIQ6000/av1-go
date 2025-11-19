@@ -11,52 +11,74 @@ import (
 )
 
 var (
-	// Styles
+	// btop-inspired color scheme
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("205"))
+			Foreground(lipgloss.Color("51")). // Bright cyan
+			Background(lipgloss.Color("235")).
+			Padding(0, 1)
 
 	statusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(lipgloss.Color("250")).
+			Background(lipgloss.Color("235")).
+			Padding(0, 1)
 
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("220"))
+			Foreground(lipgloss.Color("87")) // Bright cyan
 
 	panelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
+			BorderForeground(lipgloss.Color("66")). // Cyan-gray border
+			BorderBackground(lipgloss.Color("235")).
+			Background(lipgloss.Color("235")). // Dark background
+			Foreground(lipgloss.Color("250")). // Light text
 			Padding(1, 2).
 			Margin(1, 1, 0, 0)
 
 	panelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("213"))
+			Foreground(lipgloss.Color("87")). // Bright cyan
+			Background(lipgloss.Color("235"))
 
 	mutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+			Foreground(lipgloss.Color("238")) // Darker gray
 
 	summaryLabelStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("244"))
 
 	summaryValueStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("79"))
+				Foreground(lipgloss.Color("82")) // Bright green
 
 	successStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("46"))
+			Foreground(lipgloss.Color("82")). // Bright green
+			Bold(true)
 
 	failedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+			Foreground(lipgloss.Color("196")). // Bright red
+			Bold(true)
 
 	skippedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("226"))
+			Foreground(lipgloss.Color("226")). // Yellow
+			Bold(true)
 
 	runningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39"))
+			Foreground(lipgloss.Color("87")). // Bright cyan
+			Bold(true)
 
 	pendingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(lipgloss.Color("244")) // Gray
+
+	// Bar colors
+	cpuBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")) // Red for CPU
+
+	memBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("51")) // Cyan for Memory
+
+	gpuBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("226")) // Yellow for GPU
 )
 
 // View renders the TUI.
@@ -65,7 +87,7 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
-	title := titleStyle.Render("AV1 Transcoding Daemon - Detailed View")
+	title := titleStyle.Render("╭─ AV1 Transcoding Daemon ────────────────────────────────────────────╮")
 
 	metricsWidth := maxInt(32, m.width/2-3)
 	if metricsWidth > 48 {
@@ -132,13 +154,15 @@ func (m Model) View() string {
 	)
 }
 
-// renderPanel wraps content inside a floating panel with a title.
+// renderPanel wraps content inside a floating panel with a title (btop-style).
 func renderPanel(title, body string, width int) string {
-	content := panelTitleStyle.Render(title)
+	// Add icon/prefix to title
+	titlePrefix := "▐ "
+	content := panelTitleStyle.Render(titlePrefix + title)
 	if body != "" {
 		content += "\n" + body
 	} else {
-		content += "\n" + mutedStyle.Render("—")
+		content += "\n" + mutedStyle.Render("  ─")
 	}
 
 	if width > 0 {
@@ -147,18 +171,18 @@ func renderPanel(title, body string, width int) string {
 	return panelStyle.Render(content)
 }
 
-// renderMetrics renders CPU, memory, and GPU usage bars.
+// renderMetrics renders CPU, memory, and GPU usage bars with btop-style colors.
 func renderMetrics(cpuPercent, memPercent, gpuPercent float64) string {
 	lines := []string{
-		renderBar("CPU", cpuPercent, 24),
-		renderBar("MEM", memPercent, 24),
-		renderBar("GPU", gpuPercent, 24),
+		renderBar("CPU", cpuPercent, 24, cpuBarStyle),
+		renderBar("MEM", memPercent, 24, memBarStyle),
+		renderBar("GPU", gpuPercent, 24, gpuBarStyle),
 	}
 	return strings.Join(lines, "\n")
 }
 
-// renderBar renders a progress bar (all bars now use same format).
-func renderBar(label string, value float64, width int) string {
+// renderBar renders a progress bar with btop-style gradient colors.
+func renderBar(label string, value float64, width int, barStyle lipgloss.Style) string {
 	filled := int((value / 100.0) * float64(width))
 	if filled > width {
 		filled = width
@@ -166,8 +190,38 @@ func renderBar(label string, value float64, width int) string {
 	if filled < 0 {
 		filled = 0
 	}
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-	return fmt.Sprintf("%s: %s %5.1f%%", label, bar, value)
+	
+	// Create gradient effect - use different shades based on fill level
+	var barParts []string
+	for i := 0; i < width; i++ {
+		if i < filled {
+			// Use gradient: darker at start, brighter at end
+			if i < filled/3 {
+				barParts = append(barParts, barStyle.Foreground(lipgloss.Color("88")).Render("▁"))
+			} else if i < filled*2/3 {
+				barParts = append(barParts, barStyle.Foreground(lipgloss.Color("196")).Render("▃"))
+			} else {
+				barParts = append(barParts, barStyle.Foreground(lipgloss.Color("196")).Render("█"))
+			}
+		} else {
+			barParts = append(barParts, mutedStyle.Render("▁"))
+		}
+	}
+	
+	bar := strings.Join(barParts, "")
+	
+	// Color-code the percentage based on value
+	var percentStyle lipgloss.Style
+	if value < 50 {
+		percentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")) // Green
+	} else if value < 80 {
+		percentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // Yellow
+	} else {
+		percentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
+	}
+	
+	percent := percentStyle.Bold(true).Render(fmt.Sprintf("%5.1f%%", value))
+	return fmt.Sprintf("%s: %s %s", label, bar, percent)
 }
 
 // renderActiveJob renders detailed information about the currently active job.
@@ -186,7 +240,7 @@ func renderActiveJob(jobList []*jobs.Job) (string, bool) {
 
 	var details []string
 
-	// Header
+	// Header with icon
 	details = append(details, headerStyle.Render("⚡ ACTIVE TRANSCODE"))
 
 	// File information
@@ -286,11 +340,27 @@ func renderQueueSummary(jobList []*jobs.Job) string {
 	return strings.Join(lines, "\n")
 }
 
+// renderSummaryLine renders a summary line with btop-style formatting.
 func renderSummaryLine(label string, value int) string {
-	return fmt.Sprintf("%s %s",
-		summaryLabelStyle.Render(fmt.Sprintf("%-8s", label)),
-		summaryValueStyle.Render(fmt.Sprintf("%4d", value)),
-	)
+	var valueStyle lipgloss.Style
+	switch label {
+	case "SUCCESS":
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	case "FAILED":
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	case "RUNNING":
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("87")).Bold(true)
+	case "PENDING":
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+	case "SKIPPED":
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	default:
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
+	}
+	
+	return fmt.Sprintf("%s: %s", 
+		summaryLabelStyle.Render(label),
+		valueStyle.Render(fmt.Sprintf("%d", value)))
 }
 
 // renderJobTable renders the job table.
@@ -521,7 +591,7 @@ func formatStatus(status jobs.JobStatus) string {
 	}
 }
 
-// renderStatusBar renders the status bar at the bottom.
+// renderStatusBar renders the status bar at the bottom (btop-style).
 func renderStatusBar(jobList []*jobs.Job, jobsDir string, lastRefresh time.Time, width int) string {
 	var stats struct {
 		total   int
@@ -542,10 +612,14 @@ func renderStatusBar(jobList []*jobs.Job, jobsDir string, lastRefresh time.Time,
 		}
 	}
 
-	statusText := fmt.Sprintf("Jobs: %d total | %d running | %d failed | %d skipped | Dir: %s | Last refresh: %s | Press 'q' to quit, 'r' to refresh",
+	// Color-code the stats
+	runningText := lipgloss.NewStyle().Foreground(lipgloss.Color("87")).Bold(true).Render(fmt.Sprintf("%d", stats.running))
+	failedText := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render(fmt.Sprintf("%d", stats.failed))
+	
+	statusText := fmt.Sprintf("Jobs: %d total | %s running | %s failed | %d skipped | Dir: %s | Last refresh: %s | Press 'q' to quit, 'r' to refresh",
 		stats.total,
-		stats.running,
-		stats.failed,
+		runningText,
+		failedText,
 		stats.skipped,
 		jobsDir,
 		lastRefresh.Format("15:04:05"),
