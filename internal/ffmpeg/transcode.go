@@ -87,29 +87,28 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 
 	// Video filter chain
 	// VAAPI decode outputs in vaapi format (hardware surfaces)
-	// We need to download to CPU, apply software filters, then upload back
-	// This is necessary because setsar is a software-only filter
+	// Try to use VAAPI-native filters where possible to avoid format conversion issues
+	// For setsar, we need to download/upload, but we'll keep it simple
 	var vfParts []string
 	if isWebRipLike {
-		// WebRip: scale to handle SAR, then ensure even dimensions
-		// Download from VAAPI -> apply software filters -> upload back to VAAPI
+		// WebRip: scale to handle SAR using VAAPI scaling, then ensure even dimensions
+		// Use scale_vaapi for hardware-accelerated scaling, then download/upload for setsar
 		vfParts = append(vfParts,
+			"scale_vaapi=w='if(gt(iw,iw*sar),iw,iw*sar)':h='if(gt(iw,iw*sar),iw/sar,ih)'",
+			"scale_vaapi=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"hwdownload,format=nv12",
-			"scale=w='if(gt(iw,iw*sar),iw,iw*sar)':h='if(gt(iw,iw*sar),iw/sar,ih)'",
-			"scale=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
 			"format=nv12",
-			"hwupload=extra_hw_frames=64",
+			"hwupload",
 		)
 	} else {
-		// Non-WebRip: ensure even dimensions and set SAR
-		// Download from VAAPI -> apply software filters -> upload back to VAAPI
+		// Non-WebRip: ensure even dimensions using VAAPI, then set SAR
 		vfParts = append(vfParts,
+			"scale_vaapi=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"hwdownload,format=nv12",
-			"scale=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
 			"format=nv12",
-			"hwupload=extra_hw_frames=64",
+			"hwupload",
 		)
 	}
 
