@@ -21,11 +21,11 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	videoStream := probeResult.VideoStream
 	videoIndex := videoStream.Index
 
-	// Hybrid approach for Intel Arc GPUs:
-	// - Use VAAPI for decoding (more reliable on Linux)
-	// - Use QSV for AV1 encoding (requires proper device setup)
-	// This avoids QSV device creation errors during decode
-	log.Printf("Using VAAPI decode + QSV encode mode")
+	// Pure VAAPI approach for Intel Arc GPUs:
+	// - Use VAAPI for both decoding and AV1 encoding
+	// - Avoids QSV MFX session errors entirely
+	// - Intel Arc GPUs support AV1 encoding via VAAPI directly
+	log.Printf("Using pure VAAPI mode (decode + encode)")
 
 	// Find render node for VAAPI
 	renderNode := findRenderNode()
@@ -34,12 +34,14 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	}
 
 	// Build command arguments
-	// Use VAAPI for hardware-accelerated decoding
+	// Use VAAPI for everything - no QSV needed
 	args := []string{
 		"-hide_banner",
+		"-init_hw_device", fmt.Sprintf("vaapi=va:%s", renderNode),
 		"-hwaccel", "vaapi",
 		"-hwaccel_device", renderNode,
 		"-hwaccel_output_format", "vaapi",
+		"-filter_hw_device", "va",  // Use VAAPI for filters
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
 	}
@@ -75,22 +77,20 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	quality := determineQuality(videoStream.Height)
 
 	// Video filter chain
-	// VAAPI decode outputs in vaapi format, need to convert to QSV for encoding
-	// Use hwmap to transfer from VAAPI to QSV device, then scale/pad in QSV
+	// VAAPI decode outputs in vaapi format, process entirely in VAAPI
+	// No device conversion needed - stay in VAAPI for encoding
 	var vfParts []string
 	if isWebRipLike {
-		// WebRip: map VAAPI->QSV, then pad and set SAR in QSV
+		// WebRip: scale, pad, and set SAR all in VAAPI
 		vfParts = append(vfParts,
-			"hwmap=derive_device=qsv:mode=read",
-			"scale_qsv=w='if(gt(iw,iw*sar),iw,iw*sar)':h='if(gt(iw,iw*sar),iw/sar,ih)'",
-			"scale_qsv=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
+			"scale_vaapi=w='if(gt(iw,iw*sar),iw,iw*sar)':h='if(gt(iw,iw*sar),iw/sar,ih)'",
+			"scale_vaapi=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
 		)
 	} else {
-		// Non-WebRip: map VAAPI->QSV, then pad in QSV
+		// Non-WebRip: pad in VAAPI
 		vfParts = append(vfParts,
-			"hwmap=derive_device=qsv:mode=read",
-			"scale_qsv=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
+			"scale_vaapi=w=ceil(iw/2)*2:h=ceil(ih/2)*2",
 			"setsar=1",
 		)
 	}
@@ -98,11 +98,11 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 	args = append(args, "-vf:v:0", fmt.Sprintf("%s", joinFilterParts(vfParts)))
 
 	// Video codec and encoding parameters
+	// Use av1_vaapi encoder (Intel Arc GPUs support AV1 via VAAPI)
 	args = append(args,
-		"-c:v:0", "av1_qsv",
+		"-c:v:0", "av1_vaapi",
 		"-global_quality:v:0", fmt.Sprintf("%d", quality),
-		"-preset:v:0", "medium",
-		"-look_ahead", "1",
+		"-compression_level", "2",  // VAAPI equivalent of preset
 	)
 
 	// WebRip-specific output flags
