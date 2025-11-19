@@ -201,32 +201,104 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 			if errOutput == "" {
 				errOutput = string(output)
 			}
-			// Limit error output to last 3000 chars to avoid huge logs, but keep more context
-			if len(errOutput) > 3000 {
-				errOutput = "... " + errOutput[len(errOutput)-3000:]
+			
+			// Log full error output for debugging (last 5000 chars)
+			fullError := errOutput
+			if len(fullError) > 5000 {
+				fullError = "... " + fullError[len(fullError)-5000:]
 			}
-			// Try to extract the most relevant error line (usually near the end)
+			log.Printf("ffmpeg stderr output (last 5000 chars):\n%s", fullError)
+			
+			// Extract relevant error lines - look for error patterns
 			lines := strings.Split(errOutput, "\n")
-			var relevantError string
-			for i := len(lines) - 1; i >= 0 && i >= len(lines)-10; i-- {
+			var errorLines []string
+			
+			// Look for error patterns in the output
+			errorKeywords := []string{
+				"error", "Error", "ERROR",
+				"failed", "Failed", "FAILED",
+				"invalid", "Invalid", "INVALID",
+				"cannot", "Cannot", "CANNOT",
+				"unable", "Unable", "UNABLE",
+				"not found", "No such",
+				"Permission denied",
+				"VAAPI", "vaapi",
+				"encoder", "decoder",
+			}
+			
+			// Collect error lines (last 50 lines, filtering for relevant ones)
+			startLine := len(lines) - 50
+			if startLine < 0 {
+				startLine = 0
+			}
+			for i := startLine; i < len(lines); i++ {
 				line := strings.TrimSpace(lines[i])
-				if line != "" && !strings.Contains(line, "frame=") && !strings.Contains(line, "fps=") {
-					relevantError = line
-					break
+				if line == "" {
+					continue
+				}
+				// Skip progress lines
+				if strings.Contains(line, "frame=") || strings.Contains(line, "fps=") || 
+				   strings.Contains(line, "bitrate=") || strings.Contains(line, "speed=") ||
+				   strings.Contains(line, "time=") {
+					continue
+				}
+				// Check if line contains error keywords
+				for _, keyword := range errorKeywords {
+					if strings.Contains(line, keyword) {
+						errorLines = append(errorLines, line)
+						break
+					}
 				}
 			}
+			
+			// If we found error lines, use them; otherwise use last non-progress lines
+			var relevantError string
+			if len(errorLines) > 0 {
+				// Take last 5 error lines
+				start := len(errorLines) - 5
+				if start < 0 {
+					start = 0
+				}
+				relevantError = strings.Join(errorLines[start:], " | ")
+			} else {
+				// Fallback: get last few non-progress lines
+				for i := len(lines) - 1; i >= 0 && i >= len(lines)-20; i-- {
+					line := strings.TrimSpace(lines[i])
+					if line != "" && !strings.Contains(line, "frame=") && 
+					   !strings.Contains(line, "fps=") && !strings.Contains(line, "bitrate=") {
+						if relevantError == "" {
+							relevantError = line
+						} else {
+							relevantError = line + " | " + relevantError
+						}
+						if len(strings.Split(relevantError, " | ")) >= 3 {
+							break
+						}
+					}
+				}
+			}
+			
+			// If still no relevant error, use last part of stderr
 			if relevantError == "" {
-				relevantError = errOutput
+				relevantError = fullError
 			}
-			// Limit the relevant error to 500 chars for the reason field
-			if len(relevantError) > 500 {
-				relevantError = relevantError[:500] + "..."
+			
+			// Limit the relevant error to 800 chars for the reason field
+			if len(relevantError) > 800 {
+				relevantError = relevantError[:800] + "..."
 			}
+			
 			return exitError.ExitCode(), fmt.Errorf("ffmpeg failed with exit code %d: %s", exitError.ExitCode(), relevantError)
 		}
 		errOutput := stderr.String()
 		if errOutput == "" {
 			errOutput = string(output)
+		}
+		// Log full error for non-exit errors too
+		if len(errOutput) > 5000 {
+			log.Printf("ffmpeg execution error (last 5000 chars):\n%s", errOutput[len(errOutput)-5000:])
+		} else {
+			log.Printf("ffmpeg execution error:\n%s", errOutput)
 		}
 		return -1, fmt.Errorf("ffmpeg execution failed: %w: %s", err, errOutput)
 	}
