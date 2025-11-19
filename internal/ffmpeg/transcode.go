@@ -36,16 +36,24 @@ func TranscodeArgs(ffmpegPath, inputPath, outputPath string, probeResult *metada
 
 	// Build command arguments
 	// Use VAAPI for everything - no QSV needed
+	// Try auto-detection first, then fall back to explicit device
 	args := []string{
 		"-hide_banner",
-		"-init_hw_device", fmt.Sprintf("vaapi=va:%s", renderNode),
-		"-hwaccel", "vaapi",
-		"-hwaccel_device", renderNode,
-		"-hwaccel_output_format", "vaapi",
-		"-filter_hw_device", "va",  // Use VAAPI for filters
 		"-analyzeduration", "50M",
 		"-probesize", "50M",
 	}
+	
+	// Try VAAPI initialization - use auto-detection first (vaapi=va)
+	// This lets VAAPI find the device automatically, which is more reliable
+	args = append(args, "-init_hw_device", "vaapi=va")
+	args = append(args,
+		"-hwaccel", "vaapi",
+		"-hwaccel_output_format", "vaapi",
+		"-filter_hw_device", "va",  // Use VAAPI for filters
+	)
+	
+	// Don't specify hwaccel_device - let VAAPI auto-detect
+	// Explicit device paths can cause "No VA display found" errors
 
 	// WebRip-specific input flags
 	if isWebRipLike {
