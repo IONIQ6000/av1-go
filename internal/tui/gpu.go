@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,12 +65,69 @@ func findIntelGPUCard() string {
 	return ""
 }
 
-// getGPUUsageFromSysfs calculates GPU usage based on frequency
+// getGPUUsageFromSysfs calculates GPU usage from engine utilization (more accurate than frequency)
 func getGPUUsageFromSysfs(cardPath string) float64 {
-	// Try to read current and max frequency
-	// Path varies by kernel version, try multiple locations
-	
-	// Try gt/gt0/rps_act_freq_mhz (current frequency)
+	// Method 1: Read engine busy percentages (most accurate)
+	// Path: /sys/class/drm/cardX/gt/gt0/engines/*/busy
+	gtPath := filepath.Join(cardPath, "gt", "gt0", "engines")
+	if engines, err := os.ReadDir(gtPath); err == nil {
+		var totalBusy, count float64
+		for _, engine := range engines {
+			if !engine.IsDir() {
+				continue
+			}
+			busyPath := filepath.Join(gtPath, engine.Name(), "busy")
+			if data, err := os.ReadFile(busyPath); err == nil {
+				// Busy is typically a percentage (0-100) or a ratio
+				busyStr := strings.TrimSpace(string(data))
+				if busy, err := strconv.ParseFloat(busyStr, 64); err == nil {
+					// If it's already a percentage (0-100), use it directly
+					// If it's a ratio (0-1), multiply by 100
+					if busy <= 1.0 {
+						busy = busy * 100.0
+					}
+					totalBusy += busy
+					count++
+				}
+			}
+		}
+		if count > 0 {
+			avgBusy := totalBusy / count
+			if avgBusy > 0 {
+				return avgBusy
+			}
+		}
+	}
+
+	// Method 2: Read from intel_gpu_frequency (if available)
+	freqPath := filepath.Join(cardPath, "gt", "gt0", "intel_gpu_freq")
+	if data, err := os.ReadFile(freqPath); err == nil {
+		// Format: "act: 1200 MHz, req: 1200 MHz, idle: 200 MHz"
+		freqStr := strings.ToLower(string(data))
+		if strings.Contains(freqStr, "act:") {
+			// Try to extract actual frequency
+			parts := strings.Split(freqStr, "act:")
+			if len(parts) > 1 {
+				freqPart := strings.Split(parts[1], "mhz")[0]
+				freqPart = strings.TrimSpace(freqPart)
+				if actFreq, err := strconv.ParseFloat(freqPart, 64); err == nil {
+					// Try to find max frequency
+					maxFreqPath := filepath.Join(cardPath, "gt", "gt0", "rps_max_freq_mhz")
+					if maxData, err := os.ReadFile(maxFreqPath); err == nil {
+						if maxFreq, err := strconv.ParseFloat(strings.TrimSpace(string(maxData)), 64); err == nil && maxFreq > 0 {
+							usage := (actFreq / maxFreq) * 100.0
+							if usage > 100.0 {
+								usage = 100.0
+							}
+							return usage
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Method 3: Fallback to frequency-based calculation
 	actFreqPaths := []string{
 		filepath.Join(cardPath, "gt", "gt0", "rps_act_freq_mhz"),
 		filepath.Join(cardPath, "gt_act_freq_mhz"),
@@ -93,7 +151,6 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		return 0.0
 	}
 
-	// Try to read max frequency
 	maxFreqPaths := []string{
 		filepath.Join(cardPath, "gt", "gt0", "rps_max_freq_mhz"),
 		filepath.Join(cardPath, "gt_max_freq_mhz"),
@@ -117,7 +174,6 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 		return 0.0
 	}
 
-	// Calculate utilization as percentage of max frequency
 	usage := (float64(actFreq) / float64(maxFreq)) * 100.0
 	if usage > 100.0 {
 		usage = 100.0
@@ -127,9 +183,46 @@ func getGPUUsageFromSysfs(cardPath string) float64 {
 
 // getGPUUsageFromIntelGPUTop tries to get GPU usage from intel_gpu_top command
 func getGPUUsageFromIntelGPUTop() float64 {
-	// This would require parsing intel_gpu_top output
-	// For now, return 0 to use sysfs method
-	// Future enhancement: parse intel_gpu_top -l output
+	// Try to run intel_gpu_top with -l flag (one-shot, no interactive)
+	// Command: intel_gpu_top -l -n 1
+	// This outputs one snapshot and exits
+	cmd := exec.Command("intel_gpu_top", "-l", "-n", "1")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0.0
+	}
+
+	// Parse output - intel_gpu_top shows engine utilization
+	// Look for lines like "RC6: X%", "Render/3D: X%", "Video/0: X%", etc.
+	lines := strings.Split(string(output), "\n")
+	var totalUtil, count float64
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Look for percentage patterns: "Render/3D: 45.2%", "Video/0: 12.3%", etc.
+		if strings.Contains(line, "%") {
+			// Try to extract percentage
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.HasSuffix(part, "%") {
+					percentStr := strings.TrimSuffix(part, "%")
+					if util, err := strconv.ParseFloat(percentStr, 64); err == nil {
+						// Only count non-zero, reasonable values
+						if util > 0 && util <= 100 {
+							totalUtil += util
+							count++
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	if count > 0 {
+		avgUtil := totalUtil / count
+		return avgUtil
+	}
+	
 	return 0.0
 }
 
