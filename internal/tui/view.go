@@ -410,7 +410,7 @@ func calculateColumnWidths(totalWidth int) map[string]int {
 		"EST_SIZE":   11,
 		"SAVINGS":    9,
 		"DURATION":   9,
-		"REASON":     25,
+		"REASON":     40, // Increased to show more error details
 	}
 
 	// Calculate FILE column width (remaining space)

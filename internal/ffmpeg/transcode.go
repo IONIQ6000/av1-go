@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/yourname/av1qsvd/internal/metadata"
 )
@@ -187,11 +188,28 @@ func RunTranscode(ffmpegPath string, args []string) (int, error) {
 			if errOutput == "" {
 				errOutput = string(output)
 			}
-			// Limit error output to last 2000 chars to avoid huge logs
-			if len(errOutput) > 2000 {
-				errOutput = "... " + errOutput[len(errOutput)-2000:]
+			// Limit error output to last 3000 chars to avoid huge logs, but keep more context
+			if len(errOutput) > 3000 {
+				errOutput = "... " + errOutput[len(errOutput)-3000:]
 			}
-			return exitError.ExitCode(), fmt.Errorf("ffmpeg failed with exit code %d: %s", exitError.ExitCode(), errOutput)
+			// Try to extract the most relevant error line (usually near the end)
+			lines := strings.Split(errOutput, "\n")
+			var relevantError string
+			for i := len(lines) - 1; i >= 0 && i >= len(lines)-10; i-- {
+				line := strings.TrimSpace(lines[i])
+				if line != "" && !strings.Contains(line, "frame=") && !strings.Contains(line, "fps=") {
+					relevantError = line
+					break
+				}
+			}
+			if relevantError == "" {
+				relevantError = errOutput
+			}
+			// Limit the relevant error to 500 chars for the reason field
+			if len(relevantError) > 500 {
+				relevantError = relevantError[:500] + "..."
+			}
+			return exitError.ExitCode(), fmt.Errorf("ffmpeg failed with exit code %d: %s", exitError.ExitCode(), relevantError)
 		}
 		errOutput := stderr.String()
 		if errOutput == "" {
